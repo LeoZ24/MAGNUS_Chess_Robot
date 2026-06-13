@@ -84,5 +84,3 @@ def detectar_aruco_fijo():
 
 if __name__ == "__main__":
     detectar_aruco_fijo()
-
-print("end")
