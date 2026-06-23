@@ -1,49 +1,106 @@
-```markdown
-# Autonomous Chess Robot (Science Fair Project)
+# MAGNUS: the DIY chess robot made by a 16 year old
 
-An autonomous, vision-guided chess-playing robotic system designed for school and science fair exhibitions. The project integrates computer vision (OpenCV & ArUco markers), magnetic self-alignment mechanisms, high-precision robotic actuation, and a chess engine to play physical chess games autonomously against a human player or another AI.
+this will be improved later on
 
-## 🚀 Project Overview
-The system utilizes a top-down camera to track the state of a custom 3D-printed chessboard. Each chess piece features a specialized ArUco marker badge that allows the computer vision system to identify the piece type, color, and position. A robotic arm powered by high-precision encoder motors executes the moves calculated by the chess engine, handling piece captures and precise placement through an engineered magnetic gripper system.
+---
 
-## 🛠️ Technological Stack
+## Arquitectura modular (estilo ROS2)
 
-### Core Components & Brain
-* **Vision Processing:** Laptop (MacBook Air M1) / Future migration to Raspberry Pi 4/5.
-* **Motion Control Platform:** CyberPi microcontroller board.
-* **Actuators:** mBot2 High-Precision Encoder Motors (offering excellent torque and rotational feedback control).
-* **3D Printing:** Prusa CoreOne using Black PLA filament.
+MAGNUS está organizado en **módulos/nodos** independientes que se comunican
+mediante **mensajes tipados**, igual que en ROS2. Cada nodo hace una sola cosa y
+no conoce los detalles internos de los demás, así que se pueden desarrollar,
+probar y reemplazar por separado.
 
-### Software & Libraries
-* **Language:** Python 3.x
-* **Computer Vision:** OpenCV (`opencv-contrib-python`) with ArUco marker module.
-* **Chess Logic:** Stockfish API / Chess engine integration wrapper.
+```
+[ Visión / ArUco ]  --PositionRequest(FEN)-->  [ Engine ]  --MoveResponse-->  [ Brazo robótico ]
+   (tablero físico)                          (Stockfish/UCI)                    (motores/servos)
+```
 
-## 📏 Design & Hardware Specifications
+| Módulo            | Carpeta            | Estado            | Función |
+|-------------------|--------------------|-------------------|---------|
+| Visión            | `ArUco_Test.py`    | prototipo         | Detecta las piezas en el tablero físico (ArUco). |
+| **Engine**        | `magnus/engine/`   | ✅ funcional       | Recibe una posición (FEN) y devuelve la mejor jugada según la dificultad. |
+| Brazo robótico    | _(pendiente)_      | por hacer         | Ejecuta físicamente la jugada de `MoveResponse`. |
 
-### 1. Chessboard & Pieces
-* **Chessboard:** 32 mm square layout, 3D-printed in 4 interlocking quadrants using matte black PLA.
-* **Chess Pieces:** Circular base design (22.5 mm diameter).
-* **Contrast Optimization:** Because the board is completely black, each piece sticker incorporates a **compulsory white outer ring (Quiet Zone)** surrounding the square ArUco marker. This ensures maximum edge contrast for the detection algorithm.
+Los **contratos de datos** compartidos entre nodos viven en `magnus/core/`
+(`PositionRequest`, `MoveResponse`) y son estructuras puras (sin dependencias),
+de modo que cualquier nodo pueda construirlas/leerlas e incluso serializarlas a
+JSON para enviarlas por la red.
 
-### 2. Magnetic Self-Alignment System
-To counteract minor mechanical tolerances and physical drift, a multi-tier magnetic alignment matrix is deployed:
-* **Robotic Arm Gripper:** 12x3mm N52 Neodymium Magnet.
-* **Chess Pieces:** 10x2mm Magnets embedded in the base.
-* **Chessboard Squares:** 6x3mm Magnets embedded under the surface of each square.
-* *Engineering Note:* The magnetic pull of the arm gripper is carefully balanced to securely lift pieces from the board without accidentally dragging adjacent pieces or failing to break the board-to-piece magnetic bond.
+```
+magnus/
+├── core/
+│   └── messages.py        # PositionRequest, MoveResponse (los "mensajes")
+└── engine/
+    ├── difficulty.py      # niveles de dificultad -> EngineConfig
+    ├── backend.py         # backend de motor UCI intercambiable (Stockfish, Lc0...)
+    └── chess_engine_node.py  # el nodo: FEN -> jugada
+```
 
-## 👁️ Computer Vision & ArUco Pipeline
-The system utilizes the **4x4_50 ArUco Dictionary**. Due to the project's unique aesthetic design, the centers of the markers are overlaid with standard chess piece icons (e.g., Knights, Pawns, Queens). 
+## El nodo del engine
 
-To handle center occlusion, the vision pipeline is optimized as follows:
-* **Corner Prioritization:** The detection algorithm ignores the center and prioritizes the 4 outer corners of the ArUco marker.
-* **Algorithmic Parameters:** Configured with an aggressive `errorCorrectionRate` (≥ 0.8), `adaptiveThreshWinSizeMin = 3`, and `adaptiveThreshWinSizeMax = 25` to handle challenging lighting environments typical of science fairs.
-* **Stabilization (Lock-in Logic):** To avoid flickering and false negatives, a piece's position is only registered and "locked" into system memory after being continuously detected across 5 consecutive frames.
+Recibe la **posición** del tablero como una **FEN** (lo que producirá el módulo
+de visión a partir del tablero real) y responde con la jugada elegida, con
+metadatos pensados para el brazo (captura, enroque, captura al paso, promoción,
+jaque/mate...).
 
-### Target Marker IDs Matrix
-Priority tracking is given to the following specialized IDs optimized for high corner contrast: `0, 1, 2, 6, 8, 9, 12, 15, 16, 18, 21, 23`.
+### Instalación
 
-## 📂 Repository Structure & Testing
-* `ArUco_Test.py`: Diagnostic script used to test real-time piece tracking, frame equalization, calibration resets (via the 'R' key), and inventory management visualization.
-* `/assets`: Graphical representations of the high-contrast piece stickers (e.g., `Caballo Blanco.png`, `Peon Negro.png`, etc.).
+```bash
+pip install -r requirements.txt      # python-chess (+ visión)
+sudo apt install stockfish           # el motor (binario externo)
+# alternativamente: export MAGNUS_ENGINE_PATH=/ruta/a/tu/motor_uci
+```
+
+### Uso desde código
+
+```python
+from magnus.engine import ChessEngineNode
+
+with ChessEngineNode(default_difficulty="MEDIUM") as node:
+    # "position X" llega como FEN (más adelante, desde el nodo de visión)
+    resp = node.compute_move_from_fen(
+        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+    )
+    print(resp.uci)   # 'd2d4'   -> útil para mover el brazo (origen->destino)
+    print(resp.san)   # 'd4'
+    if resp.is_capture:
+        print("retirar pieza de", resp.captured_square)
+
+    # Cambiar la dificultad en caliente
+    node.set_difficulty("MAXIMUM")
+```
+
+### Niveles de dificultad
+
+Configurables por nodo o por petición. Cada nivel ajusta la fuerza del motor
+(Skill Level / Elo objetivo) y cuánto piensa:
+
+| Nivel       | Elo aprox. | Pensado para |
+|-------------|-----------|--------------|
+| `BEGINNER`  | ~1350     | principiantes / juega casi al azar |
+| `EASY`      | ~1500     | fácil |
+| `MEDIUM`    | ~1800     | intermedio (por defecto) |
+| `HARD`      | ~2200     | difícil |
+| `EXPERT`    | ~2600     | experto |
+| `MAXIMUM`   | máximo    | fuerza completa del motor |
+
+### Demo por línea de comandos
+
+```bash
+# Jugada desde la posición inicial
+python examples/run_engine_node.py --difficulty MEDIUM
+
+# Una posición concreta, máxima dificultad, salida JSON
+python examples/run_engine_node.py --fen "<FEN>" --difficulty MAXIMUM --json
+
+# El engine jugando contra sí mismo (6 medias-jugadas)
+python examples/run_engine_node.py --selfplay 6 --difficulty EASY
+```
+
+### Tests
+
+```bash
+pip install pytest
+pytest tests/      # los tests de integración se omiten si no hay motor instalado
+```
