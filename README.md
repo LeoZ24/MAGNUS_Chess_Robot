@@ -47,5 +47,3 @@ Priority tracking is given to the following specialized IDs optimized for high c
 ## 📂 Repository Structure & Testing
 * `ArUco_Test.py`: Diagnostic script used to test real-time piece tracking, frame equalization, calibration resets (via the 'R' key), and inventory management visualization.
 * `/assets`: Graphical representations of the high-contrast piece stickers (e.g., `Caballo Blanco.png`, `Peon Negro.png`, etc.).
-
-## 🔧 Getting Started & Execution
