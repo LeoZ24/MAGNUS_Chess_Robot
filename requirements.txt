@@ -1,0 +1,13 @@
+# Dependencias de MAGNUS
+
+# Módulo del engine de ajedrez (magnus.engine)
+chess>=1.10        # python-chess: parseo de FEN, reglas y protocolo UCI
+
+# Módulo de visión (ArUco_Test.py)
+opencv-contrib-python>=4.7   # cv2 + cv2.aruco
+numpy>=1.23
+
+# Nota: el motor en sí (Stockfish) es un binario externo, no un paquete pip.
+#   Linux:  sudo apt install stockfish
+#   macOS:  brew install stockfish
+# O define la ruta con la variable de entorno MAGNUS_ENGINE_PATH.
