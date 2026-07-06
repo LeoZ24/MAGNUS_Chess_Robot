@@ -76,11 +76,12 @@ cambia según cuál sea.
 
 ---
 
-## Formato recomendado de `magnus/arm/positions.json`
+## Formato de `magnus/arm/positions.json`
 
-> Esto es una **recomendación de diseño**, no un hecho confirmado. El formato
-> exacto (grados vs. pasos de encoder, una posición vs. dos por casilla) está
-> pendiente de decidir con el usuario.
+> Formato **implementado** en `magnus/arm/positions_table.py`: dos
+> sub-posiciones por casilla (`approach` + `engage`). Las **unidades** (grados
+> vs. pasos de encoder) siguen abiertas a propósito: la tabla y el backend
+> deben usar las mismas, pero el código no las interpreta.
 
 ```json
 {
@@ -141,31 +142,41 @@ Si necesitas modificar algo aquí, los tests deben seguir pasando:
 pytest tests/ -v
 ```
 
-### 🔶 `ArUco_Test.py` — PROTOTIPO, necesita convertirse en módulo
+### ✅ `magnus/vision/` — IMPLEMENTADO (falta validar con cámara y tablero reales)
 
-Este archivo es el origen del futuro `magnus/vision/`. Funciona pero:
-- No está encapsulado como clase/módulo
-- No produce FEN (solo detecta IDs)
-- No tiene calibración de cámara ni homografía
-- El mapeo ID ArUco → pieza de ajedrez no está definido
-- No distingue entre los 3 roles de marcadores (ver siguiente sección)
+`BoardVisionNode.get_board_fen()` existe y funciona (validado con imágenes
+sintéticas en `tests/test_vision_node.py`). Componentes:
+- `aruco_detector.py` — detección + enclavamiento, los 3 roles separados
+- `board_pose.py` — homografía mm↔px con las 4 esquinas (40=a8, 41=h8, 42=h1, 43=a1)
+- `piece_map.py` — mapeo oficial ID→pieza (ver sección ArUco)
+- `fen_builder.py` — placement → texto FEN (puro, sin dependencias)
+- `game_state.py` — `GameTracker`: deduce la jugada del humano comparando el
+  placement detectado contra las jugadas legales (resuelve turno/enroque/al paso)
+- `calibration.py` — calibración de cámara (opcional en v1)
+- `synthetic.py` — imágenes sintéticas del tablero para tests/demos
+- `vision_node.py` — `BoardVisionNode` + backends de cámara (OpenCV/Fake)
 
-**Cuando trabajes en visión**, el objetivo final es una clase que exponga:
-```python
-class BoardVisionNode:
-    def get_board_fen(self) -> str:
-        """Captura un frame y devuelve la FEN actual del tablero."""
-```
+`ArUco_Test.py` (raíz) es el prototipo original, superado por
+`examples/run_vision_demo.py`. **Pendiente:** probar con la cámara y el tablero
+físicos (los parámetros de detección pueden requerir ajuste con luz real).
 
-### 🔴 `magnus/arm/` — NO EXISTE AÚN
+### 🔶 `magnus/arm/` — IMPLEMENTADO EN SOFTWARE; bloqueado por hardware
 
-El módulo del brazo es la tarea principal pendiente. Debe seguir el mismo patrón
-que `magnus/engine/`:
-- `ArmBackend` (clase abstracta) + `CyberPiBackend` (implementación concreta)
-- `ArmNode` que recibe `MoveResponse`, consulta `positions.json` y orquesta la secuencia
-- `FakeArmBackend` para tests sin hardware (registra qué comandos se "enviarían", sin hardware real)
+Sigue el patrón de `magnus/engine/`:
+- `backend.py` — `ArmBackend` (ABC) + `FakeArmBackend` (tests/demos) +
+  `CyberPiBackend` (**stub**: lanza `NotImplementedError` hasta confirmar el
+  protocolo con CyberPi y el mecanismo de la garra)
+- `positions_table.py` — carga/consulta de `positions.json` (64 casillas +
+  zonas `discard`/`exchange`); `make_fake_table()` con valores 9999.x para tests
+- `arm_node.py` — `ArmNode.plan()` (secuencia testeable sin hardware) y
+  `.execute()`; maneja captura, al paso, enroque y promoción
 
 **Recuerda: NO calcula geometría. Solo busca en la tabla y reproduce.**
+
+Pendiente (bloqueado por hardware):
+- Implementar `CyberPiBackend` cuando se confirme el protocolo de comunicación
+- Grabar `positions.json` real calibrando el brazo
+  (`examples/generate_positions_template.py` genera la plantilla)
 
 ---
 
@@ -201,19 +212,14 @@ Si te piden trabajar en esto, créalo como módulo separado
 mezclado con la detección de piezas ni con el reproductor de secuencias
 pregrabadas.
 
-**Mapeo ID → pieza de ajedrez: NO DEFINIDO AÚN.** Cuando lo implementes,
-crear `magnus/vision/piece_map.py` con un dict como:
-```python
-ARUCO_TO_PIECE: dict[int, tuple[str, str]] = {
-    # id: (tipo, color)   tipo="K","Q","R","B","N","P"  color="w","b"
-    0:  ("K", "w"),  # rey blanco
-    1:  ("Q", "w"),  # dama blanca
-    # etc.
-}
-```
+**Mapeo ID → pieza: DEFINIDO** en `magnus/vision/piece_map.py`:
+- IDs **0–15 = blancas**, **16–31 = negras**
+- Dentro de cada color, el orden es: K, Q, R, R, B, B, N, N, P×8
+- Ej.: 0 = rey blanco (`"K"`), 1 = dama blanca (`"Q"`), 16 = rey negro (`"k"`)
 
-El carácter FEN de cada pieza sigue la convención de `python-chess`:
-mayúsculas = blancas, minúsculas = negras. Ej: `"K"` = rey blanco, `"k"` = rey negro.
+El símbolo FEN sigue la convención de `python-chess`: mayúsculas = blancas,
+minúsculas = negras. Los PNG imprimibles de los 37 marcadores se generan con
+`examples/generate_aruco_markers.py`.
 
 ---
 
@@ -225,11 +231,13 @@ La FEN es el único dato que viaja del módulo de visión al engine:
   ^posición^                                   ^turno^ ^enroque^ ^al paso^ ^semi^ ^full^
 ```
 
-El módulo de visión debe determinar **turno** (w/b) y **derechos de enroque**
-(KQkq). Opciones para el turno (sin decidir):
-- Marcador ArUco externo al tablero que indica de quién es el turno
-- Botón físico que el jugador humano presiona cuando termina su jugada
-- Inferencia por comparación de FEN anterior vs actual
+El módulo de visión determina **turno** (w/b), **derechos de enroque** (KQkq)
+y **casilla al paso** por **inferencia por software** (DECIDIDO — implementado
+en `magnus/vision/game_state.py`): el `GameTracker` mantiene un `chess.Board`
+interno y compara el placement detectado contra todas las jugadas legales; la
+que coincide es la jugada del humano. Requiere empezar desde una posición
+conocida (la inicial por defecto) y notificar las jugadas del robot con
+`notify_robot_move(uci)`.
 
 ---
 
@@ -280,30 +288,32 @@ resp.promotion       # "q","r","b","n" o None — cambio de pieza física en zon
 
 ---
 
-## Estructura de directorios objetivo
+## Estructura de directorios actual
 
 ```
 magnus/
+├── config.py      # ✅ constantes físicas + rangos de ID ArUco (única fuente de verdad)
 ├── core/          # ✅ contratos de datos — NO modificar interfaz
 ├── engine/        # ✅ nodo del engine — completo
-├── vision/        # 🔴 por crear — detecta tablero → FEN
+├── vision/        # ✅ detecta tablero → FEN (falta validar con hardware real)
 │   ├── __init__.py
-│   ├── aruco_detector.py   # lógica de detección con enclavamiento (los 3 roles, separados)
-│   ├── calibration.py      # corrección de distorsión de cámara
+│   ├── aruco_detector.py   # detección con enclavamiento (los 3 roles, separados)
+│   ├── calibration.py      # corrección de distorsión de cámara (opcional v1)
 │   ├── board_pose.py       # homografía a partir de las 4 esquinas ArUco
-│   ├── arm_tracker.py      # rastreo del marcador del brazo (V2, no v1)
-│   ├── piece_map.py        # ID ArUco → (tipo, color) de pieza
-│   └── vision_node.py      # nodo principal (equivalente a chess_engine_node.py)
-└── arm/           # 🔴 por crear — recibe MoveResponse → reproduce movimiento
+│   ├── piece_map.py        # mapeo oficial ID ArUco → símbolo FEN
+│   ├── fen_builder.py      # placement → texto FEN (puro)
+│   ├── game_state.py       # GameTracker: inferencia de la jugada del humano
+│   ├── synthetic.py        # imágenes sintéticas del tablero (tests/demos)
+│   └── vision_node.py      # BoardVisionNode + backends de cámara
+│   (arm_tracker.py — V2 futura, NO creada a propósito)
+└── arm/           # 🔶 software listo; CyberPiBackend y positions.json bloqueados por hardware
     ├── __init__.py
-    ├── backend.py           # ArmBackend ABC + CyberPiBackend
-    ├── positions.json       # tabla de posiciones pregrabadas (64 casillas) — NO existe, no inventar datos
-    ├── positions_table.py   # carga/consulta de positions.json
+    ├── backend.py           # ArmBackend ABC + FakeArmBackend + CyberPiBackend (stub)
+    ├── positions_table.py   # carga/consulta de positions.json + make_fake_table()
     └── arm_node.py          # MoveResponse → secuencia de sub-movimientos
-config.py          # 🔴 por crear — todas las constantes físicas + rangos de ID ArUco
-examples/
-tests/
-docs/
+    (positions.json — NO existe: se graba calibrando el brazo real)
+examples/          # demos ejecutables (engine, brazo, visión, pipeline completo)
+tests/             # 76+ tests; todos corren sin hardware
 ```
 
 ---

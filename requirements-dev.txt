@@ -1,0 +1,2 @@
+# Dependencias de desarrollo de MAGNUS (no necesarias para jugar)
+pytest>=8
