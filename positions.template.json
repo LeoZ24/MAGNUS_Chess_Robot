@@ -1,0 +1,662 @@
+{
+  "a1": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "b1": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "c1": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "d1": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "e1": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "f1": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "g1": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "h1": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "a2": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "b2": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "c2": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "d2": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "e2": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "f2": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "g2": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "h2": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "a3": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "b3": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "c3": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "d3": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "e3": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "f3": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "g3": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "h3": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "a4": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "b4": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "c4": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "d4": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "e4": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "f4": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "g4": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "h4": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "a5": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "b5": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "c5": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "d5": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "e5": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "f5": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "g5": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "h5": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "a6": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "b6": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "c6": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "d6": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "e6": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "f6": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "g6": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "h6": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "a7": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "b7": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "c7": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "d7": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "e7": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "f7": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "g7": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "h7": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "a8": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "b8": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "c8": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "d8": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "e8": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "f8": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "g8": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "h8": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "discard": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  },
+  "exchange": {
+    "approach": {
+      "shoulder": null,
+      "elbow": null
+    },
+    "engage": {
+      "shoulder": null,
+      "elbow": null
+    }
+  }
+}
