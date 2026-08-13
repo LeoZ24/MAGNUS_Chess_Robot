@@ -34,7 +34,7 @@ logging.basicConfig(
 
 from magnus.arm import CyberPiBackend
 
-ANGULO_PRUEBA = 15.0    # grados de motor; chico y seguro para empezar
+ANGULO_PRUEBA = 30.0    # grados de motor; chico y seguro para empezar
 
 
 def paso(descripcion):
