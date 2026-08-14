@@ -30,8 +30,27 @@ def test_detects_sparse_position():
 
 
 def test_detects_full_starting_position():
-    """Las 32 piezas de la posición inicial deben detectarse en su casilla."""
+    """Las 32 piezas de la posición inicial deben detectarse en su casilla.
+
+    Regresión clave del mapeo por tipo: los 8 peones blancos comparten el
+    ID 0 (y así con cada tipo) — TODAS las instancias deben detectarse a la
+    vez, no solo una por ID.
+    """
     placement = board_placement(chess.Board())
+    with _node_for(placement) as node:
+        assert node.get_board_placement() == placement
+
+
+def test_detects_many_instances_of_same_marker_id():
+    """8 peones blancos = 8 marcadores con el MISMO ID, en casillas distintas."""
+    placement = {f"{f}2": "P" for f in "abcdefgh"}
+    with _node_for(placement) as node:
+        assert node.get_board_placement() == placement
+
+
+def test_detects_promoted_second_queen():
+    """Una promoción pone en juego una segunda dama con el mismo ID (8)."""
+    placement = {"e1": "K", "e8": "k", "d4": "Q", "a8": "Q"}
     with _node_for(placement) as node:
         assert node.get_board_placement() == placement
 
@@ -66,7 +85,7 @@ def test_missing_corners_raises():
             node.get_board_placement()
 
 
-def test_too_many_pieces_of_a_kind_rejected():
-    """No se puede renderizar un placement con 2 reyes blancos (solo hay 1 ID)."""
+def test_invalid_piece_symbol_rejected():
+    """El renderizador sintético rechaza símbolos que no son piezas FEN."""
     with pytest.raises(SyntheticBoardError):
-        render_board_image({"e1": "K", "d1": "K"})
+        render_board_image({"e1": "X"})

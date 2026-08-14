@@ -46,8 +46,14 @@ ZONE_EXCHANGE: str = "exchange"         # zona de intercambio para promociones
 # --------------------------------------------------------------------------- #
 ARUCO_DICT_NAME: str = "DICT_4X4_50"
 
-# Piezas de ajedrez: IDs 0-31 (mapeo oficial en magnus/vision/piece_map.py).
-ARUCO_IDS_PIECES: range = range(0, 32)
+# Piezas de ajedrez: el marcador identifica el TIPO de pieza (tipo + color),
+# no la pieza individual — todos los peones blancos llevan el mismo ID, etc.
+# Estos son los 12 IDs físicamente impresos (mapeo oficial ID -> símbolo FEN
+# en magnus/vision/piece_map.py):
+#
+#   blancas: 0=peón  1=caballo  2=alfil  6=torre  8=dama  9=rey
+#   negras: 12=peón 15=caballo 16=alfil 18=torre 21=dama 23=rey
+ARUCO_IDS_PIECES: frozenset[int] = frozenset({0, 1, 2, 6, 8, 9, 12, 15, 16, 18, 21, 23})
 
 # Esquinas del tablero, para la homografía tablero↔cámara.  El orden define a
 # qué esquina física corresponde cada ID (ver magnus/vision/board_pose.py):
@@ -60,3 +66,15 @@ ARUCO_ID_ARM: int = 44
 
 # Detecciones consecutivas necesarias para confirmar un marcador (enclavamiento).
 DETECTION_CONFIRM_N: int = 5
+
+# Como varios marcadores comparten ID (todos los peones blancos son el ID 0),
+# el enclavamiento rastrea cada instancia POR POSICIÓN: una detección se asocia
+# a una pista existente del mismo ID si está a menos de
+# `lado_del_marcador × DETECTION_MATCH_RADIUS_FACTOR` píxeles.  Con marcadores
+# de ~14 mm y casillas de 32 mm, 1.5 mantiene separadas dos piezas iguales en
+# casillas adyacentes y a la vez tolera el jitter de la cámara.
+DETECTION_MATCH_RADIUS_FACTOR: float = 1.5
+
+# Un marcador confirmado que deja de verse este número de frames consecutivos
+# se olvida (la pieza se movió o se retiró).  0 = no olvidar nunca.
+DETECTION_FORGET_FRAMES: int = 20

@@ -16,7 +16,7 @@ import numpy as np
 
 from .. import config
 from .board_pose import BoardPose
-from .piece_map import ARUCO_TO_PIECE
+from .piece_map import PIECE_TO_ARUCO
 
 logger = logging.getLogger("magnus.vision.synthetic")
 
@@ -34,22 +34,19 @@ class SyntheticBoardError(Exception):
 
 
 def _ids_for_placement(placement: dict[str, str]) -> dict[str, int]:
-    """Asigna un ID ArUco concreto a cada casilla según su símbolo de pieza.
+    """Asigna a cada casilla el ID ArUco de su TIPO de pieza.
 
-    Hay varios IDs por tipo (p. ej. 8 peones blancos: IDs 8-15); se reparten en
-    orden.  Falla si el placement pide más piezas de un tipo de las que existen.
+    El marcador identifica el tipo (todos los peones blancos son el ID 0), así
+    que varias casillas pueden compartir ID — exactamente como en el tablero
+    físico.  Falla solo si el símbolo no es una pieza FEN válida.
     """
-    pool: dict[str, list[int]] = {}
-    for aruco_id, sym in sorted(ARUCO_TO_PIECE.items()):
-        pool.setdefault(sym, []).append(aruco_id)
-
     assignment: dict[str, int] = {}
     for square, sym in sorted(placement.items()):
-        if not pool.get(sym):
+        if sym not in PIECE_TO_ARUCO:
             raise SyntheticBoardError(
-                f"No quedan IDs libres para la pieza {sym!r} (casilla {square})."
+                f"Símbolo de pieza inválido en {square}: {sym!r}."
             )
-        assignment[square] = pool[sym].pop(0)
+        assignment[square] = PIECE_TO_ARUCO[sym]
     return assignment
 
 

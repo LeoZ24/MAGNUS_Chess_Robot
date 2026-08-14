@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 """Genera los PNG de todos los marcadores ArUco del proyecto, listos para imprimir.
 
-Produce 37 imágenes en la carpeta de salida, nombradas por rol para que sea
-imposible confundirlas al imprimir/pegar:
+El marcador identifica el TIPO de pieza (tipo + color), no la pieza individual:
+todos los peones blancos llevan el mismo marcador.  Por eso se generan 17
+imágenes (12 tipos de pieza + 4 esquinas + 1 brazo) y cada etiqueta indica
+CUÁNTAS COPIAS imprimir de ese marcador:
 
-    piece_00_white_king_K.png ... piece_31_black_pawn_p.png   (32 piezas)
+    piece_00_white_pawn_x8.png ... piece_23_black_king_x1.png   (12 tipos)
     corner_40_a8.png / corner_41_h8.png / corner_42_h1.png / corner_43_a1.png
     arm_44.png
+
+Consejo: imprime una copia extra de cada dama (x2 en vez de x1) para poder
+representar una promoción — las copias comparten ID, así que funcionan igual.
 
 Cada marcador lleva un borde blanco (zona de silencio, necesaria para la
 detección) y una etiqueta de texto debajo.
@@ -31,7 +36,11 @@ import cv2.aruco as aruco  # noqa: E402
 import numpy as np  # noqa: E402
 
 from magnus import config  # noqa: E402
-from magnus.vision.piece_map import ARUCO_TO_PIECE, PIECE_NAMES  # noqa: E402
+from magnus.vision.piece_map import (  # noqa: E402
+    ARUCO_TO_PIECE,
+    PIECE_COUNTS,
+    PIECE_NAMES,
+)
 
 CORNER_NAMES = dict(zip(config.ARUCO_IDS_BOARD_CORNERS, ("a8", "h8", "h1", "a1")))
 
@@ -58,12 +67,14 @@ def main() -> int:
     dictionary = aruco.getPredefinedDictionary(getattr(aruco, config.ARUCO_DICT_NAME))
 
     count = 0
-    # 32 piezas.
+    # 12 tipos de pieza (las copias físicas comparten marcador).
     for aruco_id, sym in sorted(ARUCO_TO_PIECE.items()):
         color = "white" if sym.isupper() else "black"
         name = PIECE_NAMES[sym.upper()]
-        filename = f"piece_{aruco_id:02d}_{color}_{name}_{sym}.png"
-        img = make_marker_png(dictionary, aruco_id, f"{aruco_id}: {color} {name}", args.size)
+        copies = PIECE_COUNTS[sym.upper()]
+        filename = f"piece_{aruco_id:02d}_{color}_{name}_x{copies}.png"
+        label = f"{aruco_id}: {color} {name}  (imprimir x{copies})"
+        img = make_marker_png(dictionary, aruco_id, label, args.size)
         cv2.imwrite(str(out / filename), img)
         count += 1
 
@@ -80,7 +91,9 @@ def main() -> int:
     cv2.imwrite(str(out / f"arm_{config.ARUCO_ID_ARM}.png"), img)
     count += 1
 
-    print(f"{count} marcadores escritos en {out}/")
+    total_pieces = 2 * sum(PIECE_COUNTS.values())
+    print(f"{count} marcadores escritos en {out}/ "
+          f"(las etiquetas indican las copias a imprimir: {total_pieces} piezas en total).")
     print("Imprimir a tamaño real: el marcador de cada pieza debe caber en la "
           f"tapa de {config.PIECE_DIAMETER_MM} mm con su anillo blanco.")
     return 0

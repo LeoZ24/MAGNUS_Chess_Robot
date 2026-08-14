@@ -22,7 +22,14 @@ from typing import Optional
 import numpy as np
 
 from .. import config
-from .aruco_detector import ArucoDetector, Detection, DetectionLatch, MarkerRole, split_by_role
+from .aruco_detector import (
+    ArucoDetector,
+    Detection,
+    DetectionLatch,
+    MarkerRole,
+    corners_by_id,
+    split_by_role,
+)
 from .board_pose import BoardPose
 from .calibration import CameraCalibration
 from .game_state import GameTracker
@@ -184,17 +191,20 @@ class BoardVisionNode:
     # ------------------------------------------------------------------ #
     # Escaneo
     # ------------------------------------------------------------------ #
-    def scan(self, max_frames: Optional[int] = None) -> dict[int, Detection]:
+    def scan(self, max_frames: Optional[int] = None) -> list[Detection]:
         """Captura frames y devuelve las detecciones confirmadas (enclavadas).
 
-        Cada escaneo usa un enclavamiento *fresco*: así una pieza retirada del
-        tablero (capturada) no queda "fantasma" en la memoria.
+        La lista puede contener varias instancias con el mismo ID ArUco (los
+        marcadores identifican el *tipo* de pieza: los 8 peones blancos
+        comparten ID).  Cada escaneo usa un enclavamiento *fresco*: así una
+        pieza retirada del tablero (capturada) no queda "fantasma" en memoria.
         """
         if not self._started:
             self.start()
         max_frames = max_frames or (self._confirm_n * 3)
-        latch = DetectionLatch(confirm_n=self._confirm_n)
-        confirmed: dict[int, Detection] = {}
+        # forget_after=0: en un escaneo corto de un solo uso no hay que olvidar.
+        latch = DetectionLatch(confirm_n=self._confirm_n, forget_after=0)
+        confirmed: list[Detection] = []
         for _ in range(max_frames):
             frame = self._camera.read()
             if self._calibration is not None:
@@ -208,7 +218,7 @@ class BoardVisionNode:
         confirmed = self.scan(max_frames)
         by_role = split_by_role(confirmed)
 
-        corners = by_role[MarkerRole.CORNER]
+        corners = corners_by_id(by_role[MarkerRole.CORNER])
         if len(corners) < 4:
             raise BoardNotFoundError(
                 f"Solo {len(corners)}/4 esquinas del tablero detectadas "
@@ -219,19 +229,20 @@ class BoardVisionNode:
         )
 
         placement: dict[str, str] = {}
-        occupied_by: dict[str, int] = {}
-        for aruco_id, det in by_role[MarkerRole.PIECE].items():
+        for det in by_role[MarkerRole.PIECE]:
+            symbol = ARUCO_TO_PIECE[det.aruco_id]
             square = pose.pixel_to_square(*det.center_px)
             if square is None:
                 raise AmbiguousBoardError(
-                    f"La pieza con ID {aruco_id} se detectó fuera del tablero."
+                    f"Una pieza {symbol!r} (ID {det.aruco_id}) se detectó fuera "
+                    f"del tablero, en el píxel ({det.center_px[0]:.0f}, "
+                    f"{det.center_px[1]:.0f})."
                 )
             if square in placement:
                 raise AmbiguousBoardError(
-                    f"Dos piezas en {square}: IDs {occupied_by[square]} y {aruco_id}."
+                    f"Dos piezas en {square}: {placement[square]!r} y {symbol!r}."
                 )
-            placement[square] = ARUCO_TO_PIECE[aruco_id]
-            occupied_by[square] = aruco_id
+            placement[square] = symbol
 
         logger.info("Placement detectado: %d piezas.", len(placement))
         return placement
