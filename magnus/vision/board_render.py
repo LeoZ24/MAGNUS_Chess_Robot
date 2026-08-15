@@ -109,14 +109,42 @@ _GLYPH_SHAPES: dict[str, dict[str, list[_Shape]]] = {
         ],
         "detail": [("line", (36, 42), (64, 42))],
     },
+    # Cabeza de caballo de perfil mirando a la izquierda: hocico largo, quijada
+    # marcada, oreja separada de la frente por una muesca, crin por detrás y
+    # cuello arqueado que baja a la peana.
     "N": {
         "body": [
-            ("poly", [(31, 88), (33, 72), (29, 62), (24, 50), (15, 45), (12, 38),
-                      (21, 33), (27, 25), (33, 15), (37, 6), (42, 13), (47, 5),
-                      (51, 14), (60, 21), (68, 33), (73, 48), (75, 66), (75, 88)]),
+            ("poly", [
+                (30, 76),   # base del cuello (izquierda)
+                (29, 67),   # pecho
+                (33, 59),   # garganta
+                (31, 51),   # mandíbula
+                (22, 56),   # quijada
+                (14, 56),   # barbilla
+                (8, 50),    # boca
+                (9, 40),    # punta del hocico
+                (17, 35),   # caña de la nariz
+                (26, 29),   # cara
+                (34, 22),   # frente
+                (42, 17),
+                (48, 15),   # alto de la cabeza
+                (54, 19),   # muesca delante de la oreja
+                (60, 4),    # punta de la oreja
+                (66, 20),   # detrás de la oreja
+                (71, 32),   # crin
+                (75, 46),   # dorso del cuello
+                (77, 61),
+                (78, 76),   # base del cuello (derecha)
+            ]),
+            ("poly", [(27, 76), (77, 76), (79, 84), (21, 84)]),      # peana
             _BASE,
         ],
-        "detail": [("dot", (35, 30), 2.6), ("line", (20, 40), (16, 39))],
+        "detail": [
+            ("dot", (33, 30), 2.6),          # ojo
+            ("dot", (15, 43), 1.8),          # ollar
+            ("line", (9, 47), (19, 51)),     # boca
+            ("line", (62, 24), (71, 50)),    # crin
+        ],
     },
     "B": {
         "body": [
