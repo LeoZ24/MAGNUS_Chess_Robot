@@ -158,6 +158,120 @@ def test_missing_corners_raises():
             node.get_board_placement()
 
 
+# --------------------------------------------------------------------------- #
+# Backend de cámara real: arranque lento y frames perdidos
+# --------------------------------------------------------------------------- #
+class FakeVideoCapture:
+    """Stub de ``cv2.VideoCapture``: falla las primeras ``blank_reads`` lecturas.
+
+    Reproduce el comportamiento de las cámaras virtuales (Iriun, EpocCam, OBS):
+    el dispositivo abre antes de estar transmitiendo, así que las primeras
+    lecturas devuelven ``(False, None)``.
+    """
+
+    opened_indices: list[int] = []
+
+    def __init__(self, index, blank_reads=0, opens=True, blank_forever=False):
+        self.index = index
+        self.blank_reads = blank_reads
+        self.blank_forever = blank_forever
+        self._opened = opens
+        self.released = False
+        FakeVideoCapture.opened_indices.append(index)
+
+    def isOpened(self):                                     # noqa: N802 (API de cv2)
+        return self._opened
+
+    def read(self):
+        if self.blank_forever or self.blank_reads > 0:
+            self.blank_reads -= 1
+            return False, None
+        return True, np.zeros((48, 64, 3), dtype=np.uint8)
+
+    def release(self):
+        self.released = True
+        self._opened = False
+
+
+@pytest.fixture
+def capture_factory(monkeypatch):
+    """Sustituye ``cv2.VideoCapture`` y devuelve las instancias creadas."""
+    import cv2
+
+    created: list[FakeVideoCapture] = []
+    FakeVideoCapture.opened_indices = []
+
+    def install(**kwargs):
+        def factory(index, *_args, **_kwargs):
+            cap = FakeVideoCapture(index, **kwargs)
+            created.append(cap)
+            return cap
+
+        monkeypatch.setattr(cv2, "VideoCapture", factory)
+        return created
+
+    return install
+
+
+def test_open_waits_for_the_first_frame(capture_factory):
+    """Una cámara virtual tarda en transmitir: abrir no es estar dando imagen."""
+    from magnus.vision.vision_node import OpenCVCameraBackend
+
+    capture_factory(blank_reads=8)
+    camera = OpenCVCameraBackend(0, warmup_s=5.0, retry_delay_s=0.0)
+    camera.open()                                   # no debe lanzar
+    assert camera.read().shape == (48, 64, 3)
+    camera.close()
+
+
+def test_open_explains_why_there_is_no_image(capture_factory):
+    """Si nunca llega imagen, el error apunta a permisos / índice / app virtual."""
+    from magnus.vision.vision_node import CameraError, OpenCVCameraBackend
+
+    created = capture_factory(blank_forever=True)
+    camera = OpenCVCameraBackend(0, warmup_s=0.05, retry_delay_s=0.0)
+    with pytest.raises(CameraError) as exc:
+        camera.open()
+    assert "Privacidad" in str(exc.value) and "--list-cameras" in str(exc.value)
+    assert created[0].released                      # no deja la cámara ocupada
+
+
+def test_read_survives_a_dropped_frame(capture_factory):
+    """Un frame suelto perdido (wifi) no debe tumbar la sesión."""
+    from magnus.vision.vision_node import OpenCVCameraBackend
+
+    capture_factory()
+    camera = OpenCVCameraBackend(0, warmup_s=1.0, read_retries=5, retry_delay_s=0.0)
+    camera.open()
+    camera._cap.blank_reads = 3                     # se pierden 3 frames seguidos
+    assert camera.read().shape == (48, 64, 3)
+
+
+def test_read_gives_up_after_the_retries(capture_factory):
+    from magnus.vision.vision_node import CameraError, OpenCVCameraBackend
+
+    capture_factory()
+    camera = OpenCVCameraBackend(0, warmup_s=1.0, read_retries=3, retry_delay_s=0.0)
+    camera.open()
+    camera._cap.blank_forever = True                # la cámara se desconecta
+    with pytest.raises(CameraError):
+        camera.read()
+
+
+def test_probe_cameras_lists_only_the_ones_with_image(monkeypatch):
+    """Con cámara integrada + Iriun, el índice bueno no tiene por qué ser el 0."""
+    import cv2
+
+    from magnus.vision.vision_node import probe_cameras
+
+    def factory(index, *_args, **_kwargs):
+        # Solo el índice 1 entrega imagen.
+        return FakeVideoCapture(index, opens=index <= 1, blank_forever=index != 1)
+
+    monkeypatch.setattr(cv2, "VideoCapture", factory)
+    assert probe_cameras(max_index=3, warmup_s=0.05) == [(1, (64, 48))]
+
+
 def test_invalid_piece_symbol_rejected():
     """El renderizador sintético rechaza símbolos que no son piezas FEN."""
     with pytest.raises(SyntheticBoardError):

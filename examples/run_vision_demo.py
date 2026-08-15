@@ -36,6 +36,7 @@ Teclas:
 Uso:
     python examples/run_vision_demo.py                     # webcam 0
     python examples/run_vision_demo.py --camera 1
+    python examples/run_vision_demo.py --list-cameras      # ¿qué índice da imagen?
     python examples/run_vision_demo.py --synthetic         # sin cámara (simulado)
     python examples/run_vision_demo.py --no-engine
     python examples/run_vision_demo.py --icons assets/pieces
@@ -404,6 +405,10 @@ def main() -> int:
         description="Demo de visión en vivo de MAGNUS (dashboard profesional)"
     )
     parser.add_argument("--camera", type=int, default=0, help="Índice de la cámara")
+    parser.add_argument("--list-cameras", action="store_true",
+                        help="Lista los índices de cámara que dan imagen y sale")
+    parser.add_argument("--camera-warmup", type=float, default=5.0,
+                        help="Segundos de espera al primer frame (cámaras virtuales)")
     parser.add_argument("--synthetic", action="store_true",
                         help="Sin cámara: tablero simulado que juega un guion")
     parser.add_argument("--no-engine", action="store_true",
@@ -426,6 +431,21 @@ def main() -> int:
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING,
                         format="%(levelname)s %(name)s: %(message)s")
 
+    if args.list_cameras:
+        from magnus.vision.vision_node import probe_cameras
+
+        found = probe_cameras()
+        if not found:
+            print("No se encontró ninguna cámara con imagen.\n"
+                  "Revisa los permisos de cámara del sistema (y reinicia la app "
+                  "desde la que ejecutas) y, si usas una cámara virtual como "
+                  "Iriun, que el móvil esté conectado y transmitiendo.")
+            return 2
+        print("Cámaras con imagen:")
+        for index, (width, height) in found:
+            print(f"  --camera {index}   ({width}×{height})")
+        return 0
+
     headless = args.screenshot is not None
     robot_color = chess.WHITE if args.robot_side == "white" else chess.BLACK
 
@@ -438,7 +458,7 @@ def main() -> int:
     else:
         from magnus.vision.vision_node import OpenCVCameraBackend
 
-        camera = OpenCVCameraBackend(args.camera)
+        camera = OpenCVCameraBackend(args.camera, warmup_s=args.camera_warmup)
         camera_label = f"CAMARA {args.camera}"
 
     try:
@@ -475,7 +495,11 @@ def main() -> int:
     try:
         while True:
             t0 = time.perf_counter()
-            frame = camera.read()
+            try:
+                frame = camera.read()
+            except CameraError as exc:
+                print(f"\nERROR: {exc}", file=sys.stderr)
+                return 2
             frame_idx += 1
 
             # --- Detección ------------------------------------------- #

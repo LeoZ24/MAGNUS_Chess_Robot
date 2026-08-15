@@ -16,6 +16,7 @@ turno/enroque/al paso comparando contra las jugadas legales de la partida.
 from __future__ import annotations
 
 import logging
+import time
 from abc import ABC, abstractmethod
 from typing import Optional
 
@@ -80,34 +81,132 @@ class CameraBackend(ABC):
         self.close()
 
 
-class OpenCVCameraBackend(CameraBackend):
-    """Cámara real via ``cv2.VideoCapture``."""
+def _frame_is_valid(ok: bool, frame: Optional[np.ndarray]) -> bool:
+    """``VideoCapture.read()`` puede devolver ``True`` con un frame vacío."""
+    return bool(ok) and frame is not None and getattr(frame, "size", 0) > 0
 
-    def __init__(self, index: int = 0):
+
+class OpenCVCameraBackend(CameraBackend):
+    """Cámara real via ``cv2.VideoCapture``, tolerante al arranque lento.
+
+    Abrir el dispositivo no garantiza que ya esté entregando imagen: las
+    **cámaras virtuales** (Iriun, EpocCam, OBS…) aparecen como dispositivo antes
+    de que el móvil empiece a transmitir, y en macOS ``isOpened()`` puede dar
+    ``True`` aunque el permiso de cámara aún no esté concedido.  Por eso
+    :meth:`open` espera hasta ``warmup_s`` a que llegue el primer frame bueno y,
+    si no llega, explica las causas típicas en vez de reventar más tarde en
+    mitad del bucle.
+
+    Ya en marcha, un frame suelto perdido (habitual con cámaras por wifi) no
+    debe tumbar la sesión: :meth:`read` reintenta ``read_retries`` veces antes
+    de dar la cámara por perdida.
+    """
+
+    def __init__(
+        self,
+        index: int = 0,
+        warmup_s: float = 5.0,
+        read_retries: int = 5,
+        retry_delay_s: float = 0.05,
+    ):
         self.index = index
+        self.warmup_s = warmup_s
+        self.read_retries = read_retries
+        self.retry_delay_s = retry_delay_s
         self._cap = None
 
+    # -- diagnóstico ---------------------------------------------------- #
+    def _hints(self) -> str:
+        """Causas típicas de que una cámara abra pero no entregue imagen."""
+        return (
+            f"La cámara {self.index} se abrió pero no entrega imagen. Causas "
+            "habituales:\n"
+            "  1. Permisos: en macOS, Ajustes > Privacidad y seguridad > Cámara, "
+            "activa la app desde la que ejecutas (Terminal, VS Code…) y "
+            "REINICIA esa app.\n"
+            "  2. Cámara virtual (Iriun/EpocCam/OBS): la app del móvil tiene que "
+            "estar conectada y transmitiendo antes de arrancar el demo.\n"
+            "  3. Otro programa la tiene ocupada (Zoom, Photo Booth, otra "
+            "instancia del demo): ciérralo.\n"
+            "  4. Puede no ser este índice: prueba --camera 1 / --camera 2, o "
+            "lista las disponibles con --list-cameras."
+        )
+
+    # -- ciclo de vida -------------------------------------------------- #
     def open(self) -> None:
         import cv2
 
         self._cap = cv2.VideoCapture(self.index)
         if not self._cap.isOpened():
-            raise CameraError(f"No se pudo abrir la cámara {self.index}.")
-        logger.info("Cámara %d abierta.", self.index)
+            self.close()
+            raise CameraError(
+                f"No se pudo abrir la cámara {self.index}. ¿Está conectada? "
+                "Prueba otro índice con --camera N o lista las disponibles con "
+                "--list-cameras."
+            )
+        # Espera activa al primer frame: abrir != estar transmitiendo.
+        deadline = time.monotonic() + self.warmup_s
+        attempts = 0
+        while time.monotonic() < deadline:
+            attempts += 1
+            if _frame_is_valid(*self._cap.read()):
+                logger.info(
+                    "Cámara %d abierta y transmitiendo (%d intento(s)).",
+                    self.index, attempts,
+                )
+                return
+            time.sleep(self.retry_delay_s)
+        self.close()
+        raise CameraError(self._hints())
 
     def read(self) -> np.ndarray:
         if self._cap is None:
             raise CameraError("La cámara no está abierta (llama a open()).")
-        ok, frame = self._cap.read()
-        if not ok:
-            raise CameraError("No se pudo leer un frame de la cámara.")
-        return frame
+        for attempt in range(1, self.read_retries + 1):
+            ok, frame = self._cap.read()
+            if _frame_is_valid(ok, frame):
+                return frame
+            logger.debug(
+                "Frame perdido de la cámara %d (intento %d/%d).",
+                self.index, attempt, self.read_retries,
+            )
+            time.sleep(self.retry_delay_s)
+        raise CameraError(
+            f"La cámara {self.index} dejó de entregar frames tras "
+            f"{self.read_retries} intentos. ¿Se desconectó el móvil o la app de "
+            "la cámara virtual?"
+        )
 
     def close(self) -> None:
         if self._cap is not None:
             self._cap.release()
             self._cap = None
             logger.info("Cámara %d cerrada.", self.index)
+
+
+def probe_cameras(
+    max_index: int = 8, warmup_s: float = 1.0
+) -> list[tuple[int, tuple[int, int]]]:
+    """Busca qué índices de cámara entregan imagen de verdad.
+
+    Returns:
+        ``[(índice, (ancho, alto)), ...]`` de las cámaras que dieron un frame
+        válido.  Útil para saber en qué índice está la cámara virtual (Iriun
+        suele NO ser el 0 si el portátil tiene cámara integrada).
+    """
+    found: list[tuple[int, tuple[int, int]]] = []
+    for index in range(max_index):
+        camera = OpenCVCameraBackend(index, warmup_s=warmup_s)
+        try:
+            camera.open()
+            frame = camera.read()
+        except CameraError:
+            continue
+        finally:
+            camera.close()
+        found.append((index, (int(frame.shape[1]), int(frame.shape[0]))))
+    logger.info("Cámaras con imagen: %s", [i for i, _ in found] or "ninguna")
+    return found
 
 
 class FakeCameraBackend(CameraBackend):

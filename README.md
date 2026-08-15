@@ -553,6 +553,8 @@ marcador a la vez (los peones comparten ID).
 
 ```bash
 python examples/run_vision_demo.py                 # webcam + Stockfish si está
+python examples/run_vision_demo.py --list-cameras  # ¿qué índice da imagen?
+python examples/run_vision_demo.py --camera 1      # cámara virtual (Iriun, OBS...)
 python examples/run_vision_demo.py --synthetic     # sin cámara: partida simulada
 python examples/run_vision_demo.py --no-engine     # sin Stockfish
 python examples/run_vision_demo.py --icons assets/pieces   # PNGs propios (wP.png...)
@@ -565,6 +567,23 @@ La cámara puede estar en cualquier orientación. El dashboard avisa si los
 marcadores de esquina están cruzados (los corrige solo), marca con `MEM` las
 esquinas tapadas que se están recordando y cuenta con `FUERA n` los marcadores
 detectados fuera del tablero.
+
+#### La cámara no da imagen (`No se pudo leer un frame de la cámara`)
+
+Abrir el dispositivo **no** garantiza que esté transmitiendo, sobre todo con
+cámaras virtuales (Iriun, EpocCam, OBS): el backend espera unos segundos al
+primer frame (`--camera-warmup`) y tolera frames sueltos perdidos por wifi. Si
+aun así no hay imagen:
+
+1. **Permisos**: macOS → Ajustes → Privacidad y seguridad → Cámara, activa la
+   app desde la que ejecutas (Terminal, VS Code…) y **reiníciala**. Este es el
+   motivo de que "reiniciando VS Code a veces se arreglaba".
+2. **Cámara virtual**: el móvil tiene que estar conectado y transmitiendo
+   *antes* de arrancar el demo.
+3. **Ocupada por otro programa** (Zoom, Photo Booth, otra instancia del demo).
+4. **Índice equivocado**: con cámara integrada + Iriun, la buena no suele ser
+   la `0`. `python examples/run_vision_demo.py --list-cameras` lista las que
+   dan imagen de verdad.
 
 ### Utilidades
 
