@@ -149,4 +149,4 @@ VOICE_ANNOUNCE_HUMAN_MOVES: bool = True
 
 # Segundos sin que el rival mueva antes de recordárselo con amabilidad.
 # 0 desactiva el recordatorio.
-VOICE_IDLE_PROMPT_S: float = 45.0
+VOICE_IDLE_PROMPT_S: float = 30.0
