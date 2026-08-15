@@ -468,3 +468,99 @@ def test_default_macos_voice_is_male():
     from magnus.voice.backend import MALE_SPANISH_VOICES
 
     assert config.VOICE_MACOS_VOICE in MALE_SPANISH_VOICES
+
+
+# --------------------------------------------------------------------------- #
+# Piper: sin efectos de audio y elección de calidad
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    "name,quality",
+    [
+        ("es_MX-claude-high", "high"),
+        ("es_ES-davefx-medium", "medium"),
+        ("es_ES-carlfm-x_low", "x_low"),
+        ("voz_rara", "desconocida"),
+    ],
+)
+def test_model_quality_from_name(name, quality):
+    from magnus.voice.backend import model_quality
+
+    assert model_quality(name) == quality
+
+
+def test_default_piper_voice_is_high_quality():
+    """Los modelos `medium`/`low` suenan apagados, "como debajo del agua"."""
+    from magnus.voice.backend import model_quality
+
+    assert model_quality(config.VOICE_PIPER_MODEL) == "high"
+
+
+def test_default_speed_is_the_models_natural_one():
+    """1.0 = cadencia natural del modelo; alejarse le quita naturalidad."""
+    assert config.VOICE_LENGTH_SCALE == 1.0
+
+
+def test_synthesis_applies_no_audio_effects(tmp_path, monkeypatch):
+    """La voz sale tal cual del modelo: sin filtros, tono ni resampleo.
+
+    Solo se pasa `length_scale`; el resto de parámetros quedan en los del
+    modelo, y es Piper quien escribe la cabecera del WAV (escribirla a mano con
+    otra frecuencia es justo lo que produce el efecto "bajo el agua").
+    """
+    import sys
+    import types
+
+    recorded = {}
+
+    class FakePiperVoice:
+        @staticmethod
+        def load(path, *a, **k):
+            return FakePiperVoice()
+
+        def synthesize_wav(self, text, wav_file, syn_config=None, **kwargs):
+            recorded["text"] = text
+            recorded["config"] = syn_config
+            recorded["kwargs"] = kwargs
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2)
+            wav_file.setframerate(22050)
+            wav_file.writeframes(b"\x00\x00" * 100)
+
+    class FakeSynthesisConfig:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    fake_piper = types.ModuleType("piper")
+    fake_piper.PiperVoice = FakePiperVoice
+    fake_piper.SynthesisConfig = FakeSynthesisConfig
+    monkeypatch.setitem(sys.modules, "piper", fake_piper)
+
+    from magnus.voice.backend import PiperBackend
+
+    modelo = tmp_path / "voz.onnx"
+    modelo.write_bytes(b"no es un modelo de verdad")
+    backend = PiperBackend(model=str(modelo))
+    salida = backend.synthesize_to_file("hola", tmp_path / "salida.wav")
+
+    assert salida.is_file()
+    # Solo se toca la velocidad, y con el valor por defecto ni eso.
+    assert vars(recorded["config"]) == {"length_scale": config.VOICE_LENGTH_SCALE}
+    # No se fuerza el formato del WAV: lo escribe Piper con SU frecuencia.
+    assert "set_wav_format" not in recorded["kwargs"]
+
+
+def test_falls_back_to_any_downloaded_voice(tmp_path, monkeypatch):
+    """Mejor una voz distinta a la configurada que quedarse mudo."""
+    from magnus.voice import backend as backend_module
+
+    otra = tmp_path / "es_ES-otra-high.onnx"
+    otra.write_bytes(b"modelo")
+    monkeypatch.setattr(backend_module, "_VOICE_DIRS", (tmp_path,))
+    assert backend_module.find_piper_model("es_MX-no-descargada") == otra
+
+
+def test_no_voices_downloaded_returns_none(tmp_path, monkeypatch):
+    from magnus.voice import backend as backend_module
+
+    monkeypatch.setattr(backend_module, "_VOICE_DIRS", (tmp_path,))
+    assert backend_module.find_piper_model("cualquiera") is None

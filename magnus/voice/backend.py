@@ -247,23 +247,51 @@ class MacSayBackend(SpeechBackend):
 # --------------------------------------------------------------------------- #
 # Piper (neuronal, local)
 # --------------------------------------------------------------------------- #
+def model_quality(name: str) -> str:
+    """Nivel de calidad que declara el nombre del modelo (``…-high`` -> "high").
+
+    Piper publica cada voz en varios niveles y **se nota muchísimo**: ``x_low``
+    y ``low`` van a 16 kHz y suenan apagadas, "como debajo del agua"; ``medium``
+    sube a 22 kHz; ``high`` usa además una red mayor y es la única que suena
+    realmente natural.  Para MAGNUS interesa ``high``.
+    """
+    for quality in ("x_low", "low", "medium", "high"):
+        if name.endswith(f"-{quality}"):
+            return quality
+    return "desconocida"
+
+
 def find_piper_model(
     name: str = config.VOICE_PIPER_MODEL, explicit: Optional[str] = None
 ) -> Optional[Path]:
     """Busca el ``.onnx`` de una voz de Piper.
 
     Orden: ruta explícita -> ``$MAGNUS_VOICES_DIR`` -> ``./voices`` ->
-    ``~/.local/share/magnus/voices``.  Devuelve ``None`` si no aparece.
+    ``~/.local/share/magnus/voices``.  Si la voz configurada no está descargada
+    pero hay **otra** en esas carpetas, se usa esa (y se avisa): tener una voz
+    distinta a la esperada es mucho mejor que quedarse mudo.
     """
     if explicit:
         path = Path(explicit)
         return path if path.is_file() else None
-    for directory in _VOICE_DIRS:
-        if directory is None:
-            continue
+
+    directories = [d for d in _VOICE_DIRS if d is not None]
+    for directory in directories:
         candidate = directory / f"{name}.onnx"
         if candidate.is_file():
             return candidate
+
+    for directory in directories:
+        if not directory.is_dir():
+            continue
+        alternatives = sorted(directory.glob("*.onnx"))
+        if alternatives:
+            logger.warning(
+                "La voz %r no está descargada; se usa %s. Para descargar la "
+                "configurada: python -m piper.download_voices %s --data-dir %s",
+                name, alternatives[0].name, name, directory,
+            )
+            return alternatives[0]
     return None
 
 
@@ -331,12 +359,21 @@ class PiperBackend(SpeechBackend):
         return self._voice
 
     def synthesize_to_file(self, text: str, path: Path) -> Path:
-        """Sintetiza ``text`` en un WAV (sin reproducirlo)."""
+        """Sintetiza ``text`` en un WAV (sin reproducirlo).
+
+        **No se aplica ningún efecto de audio**: ni filtros, ni cambios de tono,
+        ni resampleo.  Lo único que se toca es la velocidad (``length_scale``),
+        y con el valor por defecto (1.0) ni eso — sale exactamente la voz del
+        modelo.  Si suena rara, es el modelo: prueba uno de calidad ``high``.
+        """
         from piper import SynthesisConfig
 
         voice = self._load()
         syn_config = SynthesisConfig(length_scale=self.length_scale)
         with wave.open(str(path), "wb") as wav_file:
+            # set_wav_format=True (por defecto) hace que Piper escriba la
+            # cabecera con SU frecuencia de muestreo.  Escribirla a mano con
+            # otra frecuencia es justo lo que produce el efecto "bajo el agua".
             voice.synthesize_wav(text, wav_file, syn_config=syn_config)
         return path
 

@@ -115,10 +115,17 @@ COMMENT_ADVANTAGE_CP: int = 200
 # Jugadas mínimas entre dos comentarios de "quién va ganando" (no cansar).
 COMMENT_ADVANTAGE_EVERY_MOVES: int = 4
 
-# Voz de Piper por defecto y velocidad.  length_scale < 1 = habla más rápido;
-# un pelín acelerado ayuda al carácter de robot sin perder claridad.
-VOICE_PIPER_MODEL: str = "es_ES-davefx-medium"
-VOICE_LENGTH_SCALE: float = 0.95
+# Voz de Piper por defecto.  El sufijo del nombre es el NIVEL DE CALIDAD y se
+# nota muchísimo: `x_low` y `low` van a 16 kHz y suenan apagadas ("como debajo
+# del agua"), `medium` sube a 22 kHz y `high` es la única que suena natural.
+# Usa siempre una voz `-high` si existe para el acento que quieras.
+VOICE_PIPER_MODEL: str = "es_MX-claude-high"
+
+# Velocidad del habla: 1.0 = exactamente la cadencia natural del modelo.
+# NO se aplica ningún efecto de audio a la voz (ni filtros, ni tono, ni
+# resampleo): se busca que suene lo más humana y clara posible.  Bajarlo la
+# acelera y subirlo la ralentiza, pero alejarse de 1.0 le quita naturalidad.
+VOICE_LENGTH_SCALE: float = 1.0
 # Voz del comando `say` de macOS (respaldo cuando no hay modelo de Piper).
 # MAGNUS habla en masculino, así que por defecto se usa una voz masculina.
 # Habituales en español: Juan (es_MX), Jorge (es_ES), Diego (es_AR); femeninas:

@@ -477,6 +477,12 @@ python3 -m piper.download_voices es_MX-claude-high --data-dir voices/
 python examples/audition_voices.py --engine piper --play
 ```
 
+> **El sufijo del nombre es el nivel de calidad y se nota muchísimo.**
+> `x_low` y `low` van a 16 kHz y suenan apagadas, "como debajo del agua";
+> `medium` sube a 22 kHz; `high` es la única que suena natural. Usa siempre una
+> voz `-high`. MAGNUS **no aplica ningún efecto de audio** a la voz (ni
+> filtros, ni cambio de tono, ni resampleo): si suena rara, es el modelo.
+
 La voz elegida se pone en `magnus/config.py` → `VOICE_MACOS_VOICE` (para `say`)
 o `VOICE_PIPER_MODEL` (para Piper). También se puede probar sin editar nada:
 `python examples/run_vision_demo.py --say-voice Jorge`.

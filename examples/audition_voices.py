@@ -42,16 +42,19 @@ from magnus.voice.backend import (  # noqa: E402
     PiperBackend,
     _play_wav,
     list_system_voices,
+    model_quality,
 )
 
-# Candidatas de Piper en español.  Si alguna ya no existe en el catálogo, se
-# salta sin romper la audición.
+# Candidatas de Piper en español, LAS DE MÁS CALIDAD PRIMERO.  El sufijo del
+# nombre es el nivel de calidad y se nota mucho: `high` suena natural; `medium`
+# y sobre todo `low`/`x_low` suenan apagadas, "como debajo del agua".  Si alguna
+# ya no existe en el catálogo, se salta sin romper la audición.
 CANDIDATE_PIPER_VOICES = (
+    "es_MX-claude-high",        # México, masculina — la mejor calidad
+    "es_AR-daniela-high",       # Argentina, femenina — alta calidad
     "es_ES-davefx-medium",      # España, masculina
     "es_ES-sharvard-medium",    # España, femenina
-    "es_MX-claude-high",        # México, masculina (alta calidad)
     "es_MX-ald-medium",         # México, masculina
-    "es_AR-daniela-high",       # Argentina, femenina
 )
 
 # Frases reales de una partida: conviene juzgar la voz con lo que va a decir de
@@ -153,9 +156,15 @@ def audition_piper(args) -> int:
     data_dir.mkdir(parents=True, exist_ok=True)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    print("Ninguna voz lleva efectos: sale tal cual la sintetiza el modelo.")
+    print("Si alguna suena apagada o 'bajo el agua', es su nivel de calidad —\n"
+          "quédate con una `high`.\n")
+
     generated: list[str] = []
-    for voice_name in args.voices:
-        print(f"\n▶ {voice_name}")
+    # Primero las de mayor calidad, que son las que interesan.
+    orden = {"high": 0, "medium": 1, "low": 2, "x_low": 3, "desconocida": 4}
+    for voice_name in sorted(args.voices, key=lambda n: orden[model_quality(n)]):
+        print(f"\n▶ {voice_name}   (calidad: {model_quality(voice_name)})")
         if not download_voice(voice_name, data_dir):
             continue
         backend = PiperBackend(
