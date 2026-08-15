@@ -209,3 +209,52 @@ def test_real_engine_difficulty_levels_all_work():
             resp = node.compute_move_from_fen(STARTING_FEN, difficulty=lvl)
             assert resp.uci  # devuelve algo
             assert resp.difficulty == lvl.name
+
+
+# --------------------------------------------------------------------------- #
+# Análisis a fuerza fija (para los comentarios de voz)
+# --------------------------------------------------------------------------- #
+def test_analyse_uses_the_fixed_analysis_config_not_the_playing_difficulty():
+    """El robot puede jugar en fácil y aun así juzgar las jugadas a tope."""
+    from magnus.engine import ANALYSIS_CONFIG
+
+    seen = {}
+
+    class RecordingBackend(FakeBackend):
+        def select_move(self, board, config):
+            seen["config"] = config
+            return super().select_move(board, config)
+
+    node = ChessEngineNode(
+        backend=RecordingBackend("e2e4"), default_difficulty="BEGINNER"
+    ).start()
+    analysis = node.analyse_fen(STARTING_FEN)
+    assert seen["config"] is ANALYSIS_CONFIG          # no la de BEGINNER
+    assert analysis.evaluation_cp == 42               # sale del backend
+    assert analysis.best_move == chess.Move.from_uci("e2e4")
+
+
+def test_analyse_does_not_bother_the_engine_on_a_finished_game():
+    """Sobre jaque mate o tablas se responde sin llamar al motor."""
+
+    class ExplodingBackend(FakeBackend):
+        def select_move(self, board, config):        # pragma: no cover
+            raise AssertionError("no se debe analizar una posición terminada")
+
+        def analyse(self, board, config):            # pragma: no cover
+            raise AssertionError("no se debe analizar una posición terminada")
+
+    node = ChessEngineNode(backend=ExplodingBackend("e2e4")).start()
+
+    mate = "rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3"
+    assert node.analyse_fen(mate).mate_in == 0
+
+    ahogado = "7k/5Q2/6K1/8/8/8/8/8 b - - 0 1"
+    assert node.analyse_fen(ahogado).evaluation_cp == 0
+
+
+def test_analyse_default_implementation_works_for_simple_backends():
+    """Un backend que solo sabe elegir jugada sigue pudiendo analizar."""
+    node = ChessEngineNode(backend=FakeBackend("d2d4")).start()
+    analysis = node.analyse_fen(STARTING_FEN)
+    assert analysis.evaluation_cp == 42 and analysis.depth == 7

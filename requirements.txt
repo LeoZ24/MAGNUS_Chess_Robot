@@ -11,3 +11,10 @@ numpy>=1.23
 #   Linux:  sudo apt install stockfish
 #   macOS:  brew install stockfish
 # O define la ruta con la variable de entorno MAGNUS_ENGINE_PATH.
+
+# Módulo de voz (magnus.voice) — OPCIONAL: sin esto el robot juega en silencio.
+# piper-tts: voz neuronal local (sin internet, funciona igual en Mac y en la
+# Raspberry Pi).  Además del paquete hay que descargar una voz, una sola vez:
+#   python -m piper.download_voices es_ES-davefx-medium --data-dir voices/
+# En macOS existe el respaldo `say`, que no necesita instalar nada.
+piper-tts>=1.6 ; python_version >= "3.9"

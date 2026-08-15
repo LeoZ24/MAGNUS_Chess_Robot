@@ -14,12 +14,13 @@
 4. [Especificaciones físicas críticas](#especificaciones-físicas-críticas)
 5. [Estrategia de movimiento del brazo](#estrategia-de-movimiento-del-brazo)
 6. [Sistema de localización con ArUco](#sistema-de-localización-con-aruco)
-7. [Protocolo de mensajes entre módulos](#protocolo-de-mensajes-entre-módulos)
-8. [Estado actual y hoja de ruta](#estado-actual-y-hoja-de-ruta)
-9. [Instalación](#instalación)
-10. [Ejecución rápida](#ejecución-rápida)
-11. [Tests](#tests)
-12. [Convenciones del proyecto](#convenciones-del-proyecto)
+7. [Voz y comentarios](#voz-y-comentarios)
+8. [Protocolo de mensajes entre módulos](#protocolo-de-mensajes-entre-módulos)
+9. [Estado actual y hoja de ruta](#estado-actual-y-hoja-de-ruta)
+10. [Instalación](#instalación)
+11. [Ejecución rápida](#ejecución-rápida)
+12. [Tests](#tests)
+13. [Convenciones del proyecto](#convenciones-del-proyecto)
 
 ---
 
@@ -52,6 +53,7 @@ reemplazarse sin afectar a los demás.
 | **Engine**        | `magnus/engine/`      | ✅ Completo          | FEN → jugada con metadatos, via Stockfish UCI |
 | **Visión**        | `magnus/vision/`      | ✅ Software completo | Detección → homografía → FEN exacta (turno/enroque por inferencia); falta validar con cámara/tablero reales |
 | **Brazo robótico**| `magnus/arm/`         | 🔶 Software listo    | Secuencias pregrabadas implementadas y testeadas con backend falso; falta hardware (CyberPi + tabla de posiciones real) |
+| **Voz**           | `magnus/voice/`       | ✅ Software completo | El robot narra sus jugadas y comenta las del rival en español; falta elegir la voz definitiva de oído |
 
 ---
 
@@ -423,6 +425,68 @@ juego.  Puntos importantes del montaje:
 
 ---
 
+## Voz y comentarios
+
+MAGNUS narra lo que hace y comenta cómo va la partida, en español:
+
+> «Muevo el caballo de ge uno a efe tres.»
+> «Capturo el peón en e cinco con el alfil desde ce cuatro. Jaque.»
+> «Uy. Eso fue un error grave.» · «Buena jugada. Sigue así.»
+
+### Cómo decide qué comentar
+
+Se compara la evaluación **antes y después** de la jugada del rival, igual que
+hacen Lichess o Chess.com:
+
+```
+Δ = eval_después − eval_antes        (siempre a favor del robot, en centipeones)
+
+Δ ≥ +300  error grave      Δ ≤  −50  buena jugada
+Δ ≥ +150  error            Δ ≤ −150  muy buena jugada
+Δ ≥  +50  imprecisión      |Δ| < 50  normal → se calla
+```
+
+Los umbrales están en `magnus/config.py` (`COMMENT_*`) y son generosos a
+propósito: es preferible callar que acusar de un error que no lo fue.
+
+El análisis usa `ChessEngineNode.analyse_fen()`, que va a **fuerza fija**
+(`ANALYSIS_CONFIG`, skill 20) y no a la dificultad de juego. Así el robot puede
+jugar en `BEGINNER` para que le ganes y aun así **comentar como un maestro**.
+
+### Motor de voz
+
+| Backend | Cuándo | Notas |
+|---|---|---|
+| `PiperBackend` | **Recomendado** | Neuronal, local, gratis. Sin internet y con el mismo código en Mac y Raspberry Pi |
+| `MacSayBackend` | Respaldo | El comando `say` de macOS, cero instalación |
+| `FakeSpeechBackend` | Tests y silencio | No suena; registra lo que se habría dicho |
+
+`default_backend()` elige el mejor disponible y, si no hay ninguno, devuelve el
+falso: **quedarse sin voz nunca interrumpe una partida**.
+
+```bash
+pip install piper-tts
+python -m piper.download_voices es_ES-davefx-medium --data-dir voices/
+python examples/audition_voices.py        # audiciona varias y elige la que más te guste
+```
+
+La voz elegida se pone en `magnus/config.py` → `VOICE_PIPER_MODEL`.
+
+### Detalles que importan
+
+- **Nunca se le pasa notación cruda al TTS**: `"g1"` se convierte en `"ge uno"`
+  y `"N"` en `"caballo"` (`speech_text.py`). Un TTS leyendo "Cxf3" es
+  ininteligible.
+- **Se habla en un hilo aparte**: sintetizar tarda ~1 s y la visión corre a
+  ~14 fps; hablar en el bucle principal la congelaría.
+- **Subtítulos en el dashboard**: la última frase aparece sobre la imagen de la
+  cámara. En una feria ruidosa se lee aunque no se oiga. Tecla `M` para
+  silenciar el audio manteniendo los subtítulos.
+- **La voz es accesoria**: si el audio falla, se registra el error y la partida
+  continúa en silencio.
+
+---
+
 ## Protocolo de mensajes entre módulos
 
 Los módulos se comunican con objetos Python pasados directamente (mismo proceso)
@@ -454,7 +518,7 @@ resp_dict = response.to_dict()          # MoveResponse también tiene to_dict()
 - Zona de piezas capturadas y de intercambio (lógica; falta la física)
 - Integración de los tres nodos, demostrada sin hardware
   (`examples/run_full_pipeline_demo.py`)
-- Suite de tests completa (165+) con backends falsos — corre sin ningún hardware
+- Suite de tests completa (240+) con backends falsos — corre sin ningún hardware
 - CI en GitHub Actions (tests en cada push/PR)
 - Generador de marcadores ArUco imprimibles y de la plantilla de posiciones
 
@@ -584,6 +648,18 @@ aun así no hay imagen:
 4. **Índice equivocado**: con cámara integrada + Iriun, la buena no suele ser
    la `0`. `python examples/run_vision_demo.py --list-cameras` lista las que
    dan imagen de verdad.
+
+### Voz
+
+```bash
+# Descargar una voz (una vez, con internet) y audicionar varias
+python -m piper.download_voices es_ES-davefx-medium --data-dir voices/
+python examples/audition_voices.py --play
+
+# El demo habla solo; para silenciarlo:
+python examples/run_vision_demo.py --muted      # subtítulos sí, audio no
+python examples/run_vision_demo.py --no-voice   # ni voz ni subtítulos
+```
 
 ### Utilidades
 

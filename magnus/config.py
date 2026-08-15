@@ -94,3 +94,35 @@ DETECTION_FORGET_FRAMES_CORNERS: int = 0
 # Debe quedar muy por debajo de media casilla (16 mm) para no "meter" en el
 # tablero marcadores que están al lado.
 BOARD_EDGE_TOLERANCE_MM: float = 6.0
+
+
+# --------------------------------------------------------------------------- #
+# Voz y comentarios de la partida
+# --------------------------------------------------------------------------- #
+# Umbrales (en centipeones) para etiquetar la jugada del humano.  Se comparan
+# contra Δ = eval_después − eval_antes, medida SIEMPRE a favor del robot: si la
+# posición del robot mejora mucho tras la jugada del rival, el rival se equivocó.
+# Son generosos a propósito: es preferible callar que acusar de un error que no
+# lo fue delante del jurado.
+COMMENT_BLUNDER_CP: int = 300        # error grave
+COMMENT_MISTAKE_CP: int = 150        # error
+COMMENT_INACCURACY_CP: int = 50      # imprecisión
+COMMENT_GOOD_CP: int = 50            # buena jugada (Δ negativo de esta magnitud)
+COMMENT_GREAT_CP: int = 150          # muy buena jugada
+
+# A partir de esta ventaja se considera que alguien está ganando.
+COMMENT_ADVANTAGE_CP: int = 200
+# Jugadas mínimas entre dos comentarios de "quién va ganando" (no cansar).
+COMMENT_ADVANTAGE_EVERY_MOVES: int = 4
+
+# Voz de Piper por defecto y velocidad.  length_scale < 1 = habla más rápido;
+# un pelín acelerado ayuda al carácter de robot sin perder claridad.
+VOICE_PIPER_MODEL: str = "es_ES-davefx-medium"
+VOICE_LENGTH_SCALE: float = 0.95
+# Voz del comando `say` de macOS (respaldo cuando no hay modelo de Piper).
+VOICE_MACOS_VOICE: str = "Paulina"
+VOICE_MACOS_RATE: int = 185          # palabras por minuto
+
+# Frases en cola como máximo; si se llena, se descartan las más viejas para no
+# quedarse hablando de jugadas que ya pasaron.
+VOICE_QUEUE_MAX: int = 3

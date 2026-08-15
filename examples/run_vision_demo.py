@@ -30,6 +30,7 @@ Teclas:
     O  volver al modo observación
     F  girar la VISTA del tablero renderizado (blancas/negras abajo)
     T  girar 90° el MAPEO de casillas (si el tablero digital sale rotado)
+    M  silenciar/activar la voz
     R  resetear la memoria de detección (si mueves la cámara o el tablero)
     Q  salir
 
@@ -87,10 +88,11 @@ from magnus.vision.game_state import GameTracker, NoMatchingMoveError, board_pla
 from magnus.vision.piece_map import ARUCO_TO_PIECE, PIECE_COUNTS  # noqa: E402
 from magnus.vision.synthetic import render_board_image  # noqa: E402
 from magnus.vision.vision_node import CameraBackend, CameraError  # noqa: E402
+from magnus.voice.commentary import PositionEval  # noqa: E402
 
 WINDOW_TITLE = "MAGNUS - Vision"
 KEYS_HELP = ("G iniciar partida · O observar · F girar vista · T girar mapeo · "
-             "R resetear deteccion · Q salir")
+             "M silenciar voz · R resetear deteccion · Q salir")
 
 # Frames consecutivos con el mismo placement antes de intentar inferir la jugada.
 STABLE_FRAMES = 8
@@ -147,12 +149,21 @@ class SyntheticCamera(CameraBackend):
 # Stockfish en un hilo aparte (no congela la interfaz)
 # --------------------------------------------------------------------------- #
 class EngineWorker:
-    """Calcula jugadas en segundo plano con el ChessEngineNode."""
+    """Calcula jugadas y analiza posiciones en segundo plano.
+
+    Dos tipos de trabajo, porque sirven a cosas distintas:
+
+    * ``("move", fen)``    -> la jugada que el robot va a jugar, a la dificultad
+      elegida.
+    * ``("eval", fen)``    -> el análisis a **fuerza fija** que alimenta los
+      comentarios de voz.  Va aparte a propósito: así el robot puede jugar en
+      fácil para que le ganes y aun así juzgar las jugadas como un maestro.
+    """
 
     def __init__(self, difficulty: str):
         self._difficulty = difficulty
-        self._requests: "queue.Queue[Optional[str]]" = queue.Queue(maxsize=1)
-        self._responses: "queue.Queue[MoveResponse]" = queue.Queue()
+        self._requests: "queue.Queue[Optional[tuple[str, str]]]" = queue.Queue(maxsize=4)
+        self._responses: "queue.Queue[tuple[str, object, str]]" = queue.Queue()
         self._thread = threading.Thread(target=self._run, daemon=True, name="engine")
         self.status = "iniciando"          # "iniciando" | "listo" | "no disponible"
         self.label: Optional[str] = None   # para la píldora del dashboard
@@ -169,11 +180,15 @@ class EngineWorker:
                 self.status = "listo"
                 self.label = f"STOCKFISH · {self._difficulty}"
                 while True:
-                    fen = self._requests.get()
-                    if fen is None:
+                    job = self._requests.get()
+                    if job is None:
                         return
+                    kind, fen = job
                     try:
-                        self._responses.put(node.compute_move_from_fen(fen))
+                        if kind == "move":
+                            self._responses.put(("move", node.compute_move_from_fen(fen), fen))
+                        else:
+                            self._responses.put(("eval", node.analyse_fen(fen), fen))
                     except Exception as exc:  # GameOverError, FEN inválida...
                         logging.getLogger("demo").warning("Engine: %s", exc)
         except Exception as exc:
@@ -182,16 +197,24 @@ class EngineWorker:
                 "Stockfish no disponible (%s). El demo sigue sin engine.", exc
             )
 
-    def request(self, fen: str) -> None:
-        """Pide la jugada para una FEN (descarta si ya hay una en cola)."""
+    def _submit(self, kind: str, fen: str) -> None:
         if self.status != "listo":
             return
         try:
-            self._requests.put_nowait(fen)
+            self._requests.put_nowait((kind, fen))
         except queue.Full:
             pass
 
-    def poll(self) -> Optional[MoveResponse]:
+    def request(self, fen: str) -> None:
+        """Pide la jugada para una FEN."""
+        self._submit("move", fen)
+
+    def request_analysis(self, fen: str) -> None:
+        """Pide el análisis de una FEN (para comentar, no para jugar)."""
+        self._submit("eval", fen)
+
+    def poll(self) -> Optional[tuple[str, object, str]]:
+        """``(tipo, resultado, fen)`` o ``None``; tipo es ``"move"`` o ``"eval"``."""
         try:
             return self._responses.get_nowait()
         except queue.Empty:
@@ -218,6 +241,10 @@ class GameSession:
         self.planned: Optional[MoveResponse] = None
         self.requested_fen: Optional[str] = None
         self.last_rejected: Optional[dict[str, str]] = None
+        self.last_mover: Optional[str] = None          # "robot" | "human"
+        self.announced_uci: Optional[str] = None       # jugada ya narrada
+        self.pending_evals: dict[str, str] = {}        # fen -> "after_robot"|"after_human"
+        self.end_announced = False
 
     # -- estado derivado ------------------------------------------------ #
     @property
@@ -255,7 +282,11 @@ class GameSession:
 
     # -- jugadas -------------------------------------------------------- #
     def try_apply_placement(self, placement: dict[str, str]) -> Optional[str]:
-        """Intenta inferir la jugada humana/física; devuelve su SAN si la hubo."""
+        """Intenta inferir la jugada humana/física; devuelve su SAN si la hubo.
+
+        Deja en :attr:`last_mover` quién movió (``"robot"`` o ``"human"``): la
+        cámara ve ambas jugadas igual, pero la voz solo comenta las del rival.
+        """
         if placement == self.tracker.placement() or placement == self.last_rejected:
             return None
         before = self.board.copy()
@@ -269,6 +300,7 @@ class GameSession:
         san = before.san(move)
         self.history_san.append(san)
         self.last_rejected = None
+        self.last_mover = "robot" if before.turn == self.robot_color else "human"
         # La jugada planificada dejó de ser vigente si ya se ejecutó (o cambió).
         self.planned = None
         return san
@@ -329,6 +361,28 @@ def find_orientation(
         if placement == target:
             return turns
     return None
+
+
+def _handle_analysis(voice, session, analysis, fen: str) -> None:
+    """Usa un análisis recién llegado para comentar (o para fijar la referencia).
+
+    Tras la jugada del robot el análisis solo *fija la referencia*; tras la del
+    humano se compara con ella y sale el comentario ("buena jugada", "eso fue un
+    error"...).
+    """
+    purpose = session.pending_evals.pop(fen, None)
+    if purpose is None:
+        return
+    position = PositionEval(
+        evaluation_cp=analysis.evaluation_cp,
+        mate_in=analysis.mate_in,
+        side_to_move="white" if fen.split()[1] == "w" else "black",
+    )
+    if purpose == "after_robot":
+        voice.commentator.observe(position)
+    else:
+        voice.comment_human_move(position)
+        voice.comment_advantage(position)
 
 
 def eval_text(resp: MoveResponse) -> Optional[str]:
@@ -413,6 +467,12 @@ def main() -> int:
                         help="Sin cámara: tablero simulado que juega un guion")
     parser.add_argument("--no-engine", action="store_true",
                         help="No usar Stockfish (no se muestra jugada planificada)")
+    parser.add_argument("--no-voice", action="store_true",
+                        help="Sin voz (tampoco subtítulos)")
+    parser.add_argument("--muted", action="store_true",
+                        help="Arranca en silencio: subtítulos sí, audio no")
+    parser.add_argument("--voice-model", default=None,
+                        help="Ruta al .onnx de la voz de Piper a usar")
     parser.add_argument("--difficulty", default="MEDIUM",
                         help="Dificultad del engine (EASY/MEDIUM/HARD/...)")
     parser.add_argument("--robot-side", choices=["white", "black"], default="black",
@@ -474,6 +534,19 @@ def main() -> int:
     dashboard = Dashboard(renderer=renderer)
     engine = None if args.no_engine else EngineWorker(args.difficulty).start()
     session = GameSession(robot_color)
+
+    voice = None
+    if not args.no_voice:
+        from magnus.voice import VoiceNode
+        from magnus.voice.backend import PiperBackend, default_backend
+
+        backend = (PiperBackend(model=args.voice_model) if args.voice_model
+                   else default_backend())
+        voice = VoiceNode(
+            backend=backend,
+            robot_side="white" if robot_color == chess.WHITE else "black",
+            muted=args.muted,
+        ).start()
 
     mode = "OBSERVACION"
     message: Optional[str] = None
@@ -541,6 +614,16 @@ def main() -> int:
                     san = session.try_apply_placement(placement)
                     if san:
                         message = None
+                        # Se analiza la posición resultante para poder comentar:
+                        # tras la jugada del robot queda la referencia, y tras la
+                        # del humano se compara contra ella (Δ de centipeones).
+                        if engine is not None:
+                            nueva_fen = session.tracker.fen()
+                            session.pending_evals[nueva_fen] = (
+                                "after_robot" if session.last_mover == "robot"
+                                else "after_human"
+                            )
+                            engine.request_analysis(nueva_fen)
                 # Solo avisar si el estado ilegal PERSISTE (no mientras la mano
                 # está a medio mover una pieza).
                 if placement and placement == session.last_rejected \
@@ -551,9 +634,29 @@ def main() -> int:
                 if fen:
                     session.requested_fen = fen
                     engine.request(fen)
-                resp = engine.poll()
-                if resp is not None:
-                    session.accept_engine_response(resp)
+                result = engine.poll()
+                if result is not None:
+                    kind, payload, source_fen = result
+                    if kind == "move":
+                        session.accept_engine_response(payload)
+                    elif voice is not None:
+                        _handle_analysis(voice, session, payload, source_fen)
+
+            # --- Voz --------------------------------------------------- #
+            if voice is not None and mode == "PARTIDA":
+                # Narrar la jugada planificada, una sola vez.
+                if session.planned and session.planned.uci != session.announced_uci:
+                    session.announced_uci = session.planned.uci
+                    voice.announce_move(session.planned)
+                # Final de partida.
+                if session.board.is_game_over() and not session.end_announced:
+                    session.end_announced = True
+                    board = session.board
+                    voice.announce_game_end(
+                        is_checkmate=board.is_checkmate(),
+                        winner_is_robot=(board.is_checkmate()
+                                         and board.turn != session.robot_color),
+                    )
 
             # --- Guion sintético -------------------------------------- #
             if synth is not None and not synth_done:
@@ -608,6 +711,8 @@ def main() -> int:
                         or (None if pose else "esquinas del tablero no visibles (IDs 40-43)"),
                 error=pose_error,
                 fps=fps if not headless else None,
+                voice_phrase=voice.last_phrase if voice else None,
+                voice_muted=voice.is_muted if voice else False,
             )
             output = dashboard.compose(board_img, camera_view, state, KEYS_HELP)
 
@@ -636,6 +741,9 @@ def main() -> int:
                 pose, pose_error = None, None
             if key == ord("f"):
                 renderer.flip()
+            if key == ord("m") and voice is not None:
+                message = ("voz silenciada" if voice.toggle_mute()
+                           else "voz activada")
             if key == ord("t") and pose is not None:
                 # Gira el mapeo de casillas (no la vista): útil si los 4
                 # marcadores están bien en el borde pero empezando en otra
@@ -659,12 +767,17 @@ def main() -> int:
                         pose = pose.rotated(turns)
                     session = GameSession(robot_color)
                     mode = "PARTIDA"
+                    if voice is not None:
+                        voice.new_game()
+                        voice.greet()
                     message = (f"orientacion corregida sola ({turns * 90}°)"
                                if turns else None)
     finally:
         camera.close()
         if engine is not None:
             engine.stop()
+        if voice is not None:
+            voice.shutdown(wait=False)
         if not headless:
             cv2.destroyAllWindows()
 
