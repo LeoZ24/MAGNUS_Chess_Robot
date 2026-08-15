@@ -486,6 +486,12 @@ python3 -m piper.download_voices es_MX-claude-high --data-dir voices/
 python3 examples/audition_voices.py --engine piper --play
 ```
 
+> **Los modelos de voz NO se suben a git.** Pesan entre 60 y 110 MB y GitHub
+> rechaza cualquier archivo de más de 100 MB (`GH001: Large files detected`).
+> La carpeta `voices/` está en `.gitignore`: cada quien descarga la voz que
+> necesita. Si por accidente ya los commiteaste, sácalos con
+> `git rm -r --cached voices` antes de volver a hacer push.
+>
 > **El sufijo del nombre es el nivel de calidad y se nota muchísimo.**
 > `x_low` y `low` van a 16 kHz y suenan apagadas, "como debajo del agua";
 > `medium` sube a 22 kHz; `high` es la única que suena natural. Usa siempre una

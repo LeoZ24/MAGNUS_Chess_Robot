@@ -115,11 +115,13 @@ COMMENT_ADVANTAGE_CP: int = 200
 # Jugadas mínimas entre dos comentarios de "quién va ganando" (no cansar).
 COMMENT_ADVANTAGE_EVERY_MOVES: int = 4
 
-# Voz de Piper por defecto.  El sufijo del nombre es el NIVEL DE CALIDAD y se
-# nota muchísimo: `x_low` y `low` van a 16 kHz y suenan apagadas ("como debajo
-# del agua"), `medium` sube a 22 kHz y `high` es la única que suena natural.
-# Usa siempre una voz `-high` si existe para el acento que quieras.
-VOICE_PIPER_MODEL: str = "es_MX-claude-high"
+# Voz de Piper: elegida de oído con examples/audition_voices.py.
+# El sufijo del nombre es el NIVEL DE CALIDAD del modelo y se nota: `x_low` y
+# `low` van a 16 kHz y suenan apagadas, `medium` sube a 22 kHz y `high` usa
+# además una red mayor.  Si cambias de voz, prueba primero las `-high`.
+# Los modelos NO están en el repo (pesan 60-110 MB): se descargan con
+#   python3 -m piper.download_voices es_ES-davefx-medium --data-dir voices/
+VOICE_PIPER_MODEL: str = "es_ES-davefx-medium"
 
 # Velocidad del habla: 1.0 = exactamente la cadencia natural del modelo.
 # NO se aplica ningún efecto de audio a la voz (ni filtros, ni tono, ni
