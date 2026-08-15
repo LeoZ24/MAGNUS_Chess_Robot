@@ -25,7 +25,7 @@ import logging
 import math
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
+from typing import Mapping, Optional
 
 import cv2
 import cv2.aruco as aruco
@@ -152,18 +152,36 @@ class DetectionLatch:
       pero se olvida tras ``forget_after`` frames sin verse — así una pieza
       movida o capturada no deja un "fantasma".  ``forget_after=0`` desactiva
       el olvido (útil en escaneos cortos de un solo uso).
+    * **Las esquinas son la excepción**: no se olvidan nunca (ver
+      ``config.DETECTION_FORGET_FRAMES_CORNERS``).  El tablero y la cámara no
+      se mueven durante la partida, así que una esquina tapada por una torre se
+      queda memorizada en su última posición y la homografía sigue viva.
+    * Los IDs de esquina son únicos (a diferencia de los de pieza): mientras
+      haya una pista de esquina confirmada, otra detección del mismo ID lejos
+      de ella se ignora — un marcador de esquina suelto en la mesa o un reflejo
+      no puede robarle el sitio al bueno.
     * :meth:`reset` borra toda la memoria (cámara o tablero movidos).
     """
+
+    #: Roles cuyos IDs identifican una instancia única (no hay dos esquinas 40).
+    UNIQUE_ID_ROLES: frozenset[MarkerRole] = frozenset({MarkerRole.CORNER})
 
     def __init__(
         self,
         confirm_n: int = config.DETECTION_CONFIRM_N,
         forget_after: int = config.DETECTION_FORGET_FRAMES,
         match_radius_factor: float = config.DETECTION_MATCH_RADIUS_FACTOR,
+        forget_after_by_role: Optional[Mapping[MarkerRole, int]] = None,
     ):
         self.confirm_n = confirm_n
         self.forget_after = forget_after
         self.match_radius_factor = match_radius_factor
+        # Política de olvido por rol; lo no listado usa `forget_after`.
+        self.forget_after_by_role: dict[MarkerRole, int] = (
+            dict(forget_after_by_role)
+            if forget_after_by_role is not None
+            else {MarkerRole.CORNER: config.DETECTION_FORGET_FRAMES_CORNERS}
+        )
         self._tracks: list[_Track] = []
 
     # ------------------------------------------------------------------ #
@@ -177,6 +195,13 @@ class DetectionLatch:
         for det in detections:
             idx = self._match(det, exclude=matched)
             if idx is None:
+                if self._is_duplicate_unique(det):
+                    logger.debug(
+                        "Detección extra del marcador único %d en (%.0f, %.0f) "
+                        "ignorada: ya hay una pista confirmada en otra posición.",
+                        det.aruco_id, det.center_px[0], det.center_px[1],
+                    )
+                    continue
                 track = _Track(detection=det)
                 track.confirmed = track.hits >= self.confirm_n
                 new_tracks.append(track)
@@ -194,7 +219,7 @@ class DetectionLatch:
                 )
 
         # Pistas no vistas este frame: las pendientes pierden la racha; las
-        # confirmadas aguantan hasta forget_after frames.
+        # confirmadas aguantan hasta forget_after frames (las esquinas, siempre).
         survivors: list[_Track] = []
         for idx, track in enumerate(self._tracks):
             if idx in matched:
@@ -203,7 +228,8 @@ class DetectionLatch:
             if not track.confirmed:
                 continue                # racha rota: se descarta
             track.missed += 1
-            if self.forget_after and track.missed >= self.forget_after:
+            forget_after = self.forget_for(track.detection.role)
+            if forget_after and track.missed >= forget_after:
                 det = track.detection
                 logger.debug(
                     "Marcador %d olvidado tras %d frames sin verse (%.0f, %.0f).",
@@ -214,6 +240,18 @@ class DetectionLatch:
 
         self._tracks = survivors + new_tracks
         return self.confirmed
+
+    def forget_for(self, role: MarkerRole) -> int:
+        """Frames sin ver tras los que se olvida un marcador de ese rol (0 = nunca)."""
+        return self.forget_after_by_role.get(role, self.forget_after)
+
+    def _is_duplicate_unique(self, det: Detection) -> bool:
+        """``True`` si es un ID único (esquina) que ya tiene pista confirmada."""
+        if det.role not in self.UNIQUE_ID_ROLES:
+            return False
+        return any(
+            t.confirmed and t.detection.aruco_id == det.aruco_id for t in self._tracks
+        )
 
     def _match(self, det: Detection, exclude: set[int]) -> Optional[int]:
         """Índice de la pista más cercana compatible con la detección, o None."""
@@ -241,6 +279,15 @@ class DetectionLatch:
     def pending(self) -> list[Detection]:
         """Detecciones aún en racha de confirmación (no confirmadas)."""
         return [t.detection for t in self._tracks if not t.confirmed]
+
+    @property
+    def occluded(self) -> list[Detection]:
+        """Confirmadas que NO se ven ahora mismo: se recuerdan de frames previos.
+
+        Sirve para avisar en la interfaz de que, p. ej., una esquina está tapada
+        y se está usando su última posición conocida.
+        """
+        return [t.detection for t in self._tracks if t.confirmed and t.missed > 0]
 
     def stats(self) -> dict[MarkerRole, int]:
         """Número de instancias confirmadas por rol (para interfaces/demos)."""

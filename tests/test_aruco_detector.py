@@ -148,6 +148,67 @@ def test_reset_clears_memory():
 
 
 # --------------------------------------------------------------------------- #
+# Esquinas: estáticas, únicas y no se olvidan
+# --------------------------------------------------------------------------- #
+def test_corner_is_never_forgotten_when_covered():
+    """Una torre puede tapar la esquina: se recuerda su última posición.
+
+    Ni la cámara ni el tablero se mueven durante la partida, así que perder el
+    marcador de esquina no debe tumbar la homografía.
+    """
+    latch = DetectionLatch(confirm_n=2, forget_after=5)
+    for _ in range(2):
+        latch.update([det(40, 10, 10)])
+    for _ in range(200):                            # muchísimos frames tapada
+        confirmed = latch.update([])
+    assert centers(confirmed) == {(10.0, 10.0)}
+
+
+def test_piece_is_forgotten_but_corner_is_remembered():
+    latch = DetectionLatch(confirm_n=2, forget_after=3)
+    frame = [det(0, 100, 100), det(40, 10, 10)]     # una pieza y una esquina
+    for _ in range(2):
+        latch.update(frame)
+    for _ in range(3):
+        confirmed = latch.update([])
+    assert [d.aruco_id for d in confirmed] == [40]
+
+
+def test_occluded_lists_only_markers_not_seen_now():
+    latch = DetectionLatch(confirm_n=1)
+    latch.update([det(0, 100, 100), det(40, 10, 10)])
+    assert latch.occluded == []
+    latch.update([det(0, 100, 100)])                # la esquina se tapa
+    assert [d.aruco_id for d in latch.occluded] == [40]
+
+
+def test_duplicate_corner_id_far_away_is_ignored():
+    """Un marcador de esquina suelto en la mesa no puede robarle el sitio al bueno."""
+    latch = DetectionLatch(confirm_n=1)
+    latch.update([det(40, 10, 10)])                             # esquina confirmada
+    confirmed = latch.update([det(40, 10, 10), det(40, 900, 700)])
+    assert centers(confirmed) == {(10.0, 10.0)}
+
+
+def test_duplicate_piece_id_far_away_still_creates_a_track():
+    """La regla anterior es SOLO para IDs únicos: las piezas comparten ID."""
+    latch = DetectionLatch(confirm_n=1)
+    latch.update([det(0, 100, 100)])
+    confirmed = latch.update([det(0, 100, 100), det(0, 900, 700)])
+    assert len(confirmed) == 2
+
+
+def test_forget_after_by_role_is_configurable():
+    latch = DetectionLatch(
+        confirm_n=1, forget_after=0, forget_after_by_role={MarkerRole.CORNER: 2}
+    )
+    latch.update([det(40, 10, 10)])
+    latch.update([])
+    assert len(latch.confirmed) == 1
+    assert latch.update([]) == []                   # olvidada al 2º frame
+
+
+# --------------------------------------------------------------------------- #
 # Utilidades por rol
 # --------------------------------------------------------------------------- #
 def test_split_by_role_keeps_duplicated_ids():

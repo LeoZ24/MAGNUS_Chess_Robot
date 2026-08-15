@@ -6,21 +6,44 @@ Se renderiza una vista cenital del tablero con marcadores ArUco reales
 """
 
 import chess
+import numpy as np
 import pytest
 
+from magnus import config
 from magnus.core.messages import STARTING_FEN
 from magnus.vision.game_state import GameTracker, board_placement
 from magnus.vision.synthetic import SyntheticBoardError, render_board_image
 from magnus.vision.vision_node import (
     BoardNotFoundError,
     BoardVisionNode,
+    CameraBackend,
     FakeCameraBackend,
 )
+
+# Marcadores de esquina puestos en "orden de lectura" (40 y 41 arriba, 42 y 43
+# abajo) en vez de recorriendo el borde: el error de montaje más natural.
+READING_ORDER_CORNERS = {40: "a8", 41: "h8", 42: "a1", 43: "h1"}
 
 
 def _node_for(placement: dict[str, str], **node_kwargs) -> BoardVisionNode:
     frame = render_board_image(placement)
     return BoardVisionNode(camera=FakeCameraBackend([frame]), **node_kwargs)
+
+
+class SwitchableCamera(CameraBackend):
+    """Cámara falsa cuyo frame se puede cambiar entre escaneos."""
+
+    def __init__(self, frame: np.ndarray):
+        self.frame = frame
+
+    def open(self) -> None:
+        pass
+
+    def read(self) -> np.ndarray:
+        return self.frame
+
+    def close(self) -> None:
+        pass
 
 
 def test_detects_sparse_position():
@@ -73,6 +96,56 @@ def test_full_move_cycle_with_tracker():
         node.notify_robot_move("e7e5")     # jugada del robot (del engine)
         board.push_uci("e7e5")
         assert tracker.fen() == board.fen()
+
+
+# --------------------------------------------------------------------------- #
+# Montaje real: cámara girada, esquinas cruzadas, esquinas tapadas
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("quarter_turns", [0, 1, 2, 3])
+def test_camera_orientation_does_not_matter(quarter_turns):
+    """Cámara apaisada o desde el lado de las negras: la FEN sale igual."""
+    placement = board_placement(chess.Board())
+    frame = np.ascontiguousarray(np.rot90(render_board_image(placement), quarter_turns))
+    with BoardVisionNode(camera=FakeCameraBackend([frame])) as node:
+        assert node.get_board_placement() == placement
+
+
+def test_corners_in_reading_order_still_produce_the_fen():
+    """Regresión del fallo real: con las esquinas cruzadas no se detectaba NADA.
+
+    La homografía salía degenerada y las 32 piezas caían "fuera del tablero":
+    tablero digital vacío y sin FEN, pese a detectarse los 36 marcadores.
+    """
+    placement = board_placement(chess.Board())
+    frame = render_board_image(placement, corner_layout=READING_ORDER_CORNERS)
+    with BoardVisionNode(camera=FakeCameraBackend([frame])) as node:
+        assert node.get_board_fen() == STARTING_FEN
+        assert node.board_pose.layout_warning is not None   # avisa del cruce
+
+
+def test_pose_is_remembered_when_a_rook_covers_a_corner():
+    """Perder un marcador de esquina no debe tumbar el tablero."""
+    placement = board_placement(chess.Board())
+    camera = SwitchableCamera(render_board_image(placement))
+    with BoardVisionNode(camera=camera) as node:
+        assert node.get_board_placement() == placement      # memoriza la pose
+        camera.frame = render_board_image(placement, hidden_corners=[43])
+        assert node.get_board_placement() == placement      # sigue funcionando
+        node.reset_board_pose()
+        with pytest.raises(BoardNotFoundError):             # ya no la recuerda
+            node.get_board_placement()
+
+
+def test_markers_outside_the_board_are_ignored():
+    """Piezas capturadas o marcadores sueltos en la mesa no entran en el placement."""
+    placement = {"e1": "K", "e8": "k", "d4": "Q"}
+    size = config.BOARD_SIZE_MM
+    frame = render_board_image(
+        placement,
+        extra_markers=[(12, (-18.0, 128.0)), (8, (size + 18.0, 60.0))],
+    )
+    with BoardVisionNode(camera=FakeCameraBackend([frame])) as node:
+        assert node.get_board_placement() == placement
 
 
 def test_missing_corners_raises():

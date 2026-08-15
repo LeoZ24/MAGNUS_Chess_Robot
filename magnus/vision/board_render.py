@@ -212,6 +212,23 @@ def _text_width(text: str, scale: float, thickness: int = 1,
     return w
 
 
+def _wrap_text(text: str, max_width_px: int, scale: float,
+               thickness: int = 1) -> list[str]:
+    """Parte un texto en líneas que quepan en ``max_width_px`` (corte por palabras)."""
+    lines: list[str] = []
+    current = ""
+    for word in text.split():
+        candidate = f"{current} {word}".strip()
+        if current and _text_width(candidate, scale, thickness) > max_width_px:
+            lines.append(current)
+            current = word
+        else:
+            current = candidate
+    if current:
+        lines.append(current)
+    return lines or [""]
+
+
 def _normalize_move(move: Optional[MoveLike]) -> Optional[tuple[str, str]]:
     """Acepta UCI ("e2e4", "e7e8q") o tupla ("e2","e4") y normaliza a tupla."""
     if move is None:
@@ -555,8 +572,10 @@ class DashboardState:
     mode: str = "OBSERVACION"                   # "OBSERVACION" | "PARTIDA" | texto libre
     turn: Optional[str] = None                  # "w" / "b"
     corners_found: int = 0
+    corners_remembered: int = 0                 # esquinas tapadas, en su última posición
     pieces_confirmed: int = 0
     pieces_pending: int = 0
+    pieces_off_board: int = 0                   # marcadores de pieza fuera del tablero
     arm_seen: bool = False
     camera_label: str = "CAMARA"
     engine_label: Optional[str] = None          # p. ej. "Stockfish · MEDIUM"
@@ -644,12 +663,17 @@ class Dashboard:
         # Píldoras de estado a la derecha.
         pills: list[tuple[str, tuple[int, int, int], bool]] = []
         board_ok = state.corners_found >= 4
-        pills.append((f"TABLERO {state.corners_found}/4",
-                      theme.accent if board_ok else theme.warn, board_ok))
+        # Las esquinas tapadas se recuerdan: se marcan con "MEM" en vez de perderse.
+        board_text = f"TABLERO {state.corners_found}/4"
+        if state.corners_remembered:
+            board_text += f" ·{state.corners_remembered} MEM"
+        pills.append((board_text, theme.accent if board_ok else theme.warn, board_ok))
         pills.append((f"PIEZAS {state.pieces_confirmed}", theme.accent
                       if state.pieces_confirmed else theme.text_dim, False))
         if state.pieces_pending:
             pills.append((f"DETECTANDO {state.pieces_pending}", theme.warn, False))
+        if state.pieces_off_board:
+            pills.append((f"FUERA {state.pieces_off_board}", theme.warn, False))
         if state.engine_label:
             pills.append((state.engine_label, theme.accent, False))
         if state.arm_seen:
@@ -750,12 +774,15 @@ class Dashboard:
             _put_text(img, "sin jugadas", (x + 12, cy + 18), 0.44, theme.text_dim, 1)
             cy += 22
 
-        # Avisos.
-        msg_y = y + h - 14
-        if state.error:
-            _put_text(img, state.error, (x + 12, msg_y), 0.44, theme.error, 1)
-        elif state.message:
-            _put_text(img, state.message, (x + 12, msg_y), 0.44, theme.warn, 1)
+        # Avisos (al pie del panel, en varias líneas si hacen falta).
+        text, color = ((state.error, theme.error) if state.error
+                       else (state.message, theme.warn))
+        if text:
+            lines = _wrap_text(text, w - 24, 0.44)
+            msg_y = y + h - 14 - 16 * (len(lines) - 1)
+            for line in lines:
+                _put_text(img, line, (x + 12, msg_y), 0.44, color, 1)
+                msg_y += 16
 
     def _sub_title(self, img: np.ndarray, x: int, cy: int, text: str) -> int:
         _put_text(img, text, (x + 12, cy + 12), 0.4, self.theme.text_dim, 1)

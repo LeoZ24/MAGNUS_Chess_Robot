@@ -199,9 +199,12 @@ Tablero físico → placement → FEN exacta. Componentes:
   marcador debe verse N frames consecutivos antes de confirmarse, y como los
   IDs identifican el *tipo* de pieza (los 8 peones blancos comparten ID), cada
   instancia física se rastrea por posición; los tres roles de marcadores van
-  separados
+  separados.  Las esquinas, al ser estáticas y de ID único, **se recuerdan en
+  su última posición** aunque una pieza las tape
 - `board_pose.py` — homografía tablero(mm)↔imagen(px) con las 4 esquinas; mapea
-  el centro de cada pieza a su casilla
+  el centro de cada pieza a su casilla.  Deduce de la geometría qué esquina
+  ocupa cada marcador (tolera marcadores cruzados y cualquier orientación de
+  cámara) y descarta lo que esté fuera del área de juego
 - `piece_map.py` — mapeo oficial ID ArUco → símbolo FEN (por tipo de pieza)
 - `fen_builder.py` — placement → texto FEN (módulo puro)
 - `game_state.py` — `GameTracker`: deduce la jugada del humano comparando el
@@ -388,6 +391,36 @@ tablero en coordenadas de imagen y viceversa — esto es lo que hace posible,
 a futuro, comparar "dónde debería estar el brazo" contra "dónde está
 realmente" usando la cámara.
 
+### Cómo colocar los 4 marcadores de esquina
+
+Los IDs **recorren el borde del tablero**, no van en orden de lectura:
+
+```
+    40 (a8) ─────────── 41 (h8)          ✅ 40 → 41 → 42 → 43 recorre el
+      │                    │                borde (sentido horario visto
+    43 (a1) ─────────── 42 (h1)             desde arriba con blancas abajo)
+
+    40 ─────── 41                        ❌ zig-zag: 42 y 43 cruzados
+      │  ╳     │
+    42 ─────── 43
+```
+
+El centro de cada marcador debe coincidir con la esquina exterior del área de
+juego.  Puntos importantes del montaje:
+
+- **La orientación de la cámara da igual**: cada esquina se identifica por su
+  ID, así que la cámara puede estar apaisada, vertical, del lado de las blancas
+  o de las negras, y el tablero girado cualquier ángulo dentro de la imagen.
+- Si dos marcadores contiguos se colocan cruzados, la visión lo **detecta y lo
+  corrige sola** (avisa en el dashboard) — antes esto producía una homografía
+  degenerada en la que todas las piezas caían "fuera del tablero".
+- Si el tablero digital sale girado 90/180°, se corrige con la tecla `T` del
+  demo, o iniciando la partida con `G` desde la posición inicial (deduce la
+  orientación probando los cuatro giros).
+- Una esquina tapada por una pieza **no** rompe nada: la última posición
+  conocida se recuerda mientras la cámara y el tablero no se muevan (tecla `R`
+  para olvidarla si se mueven).
+
 ---
 
 ## Protocolo de mensajes entre módulos
@@ -421,7 +454,7 @@ resp_dict = response.to_dict()          # MoveResponse también tiene to_dict()
 - Zona de piezas capturadas y de intercambio (lógica; falta la física)
 - Integración de los tres nodos, demostrada sin hardware
   (`examples/run_full_pipeline_demo.py`)
-- Suite de tests completa (76+) con backends falsos — corre sin ningún hardware
+- Suite de tests completa (165+) con backends falsos — corre sin ningún hardware
 - CI en GitHub Actions (tests en cada push/PR)
 - Generador de marcadores ArUco imprimibles y de la plantilla de posiciones
 
@@ -523,9 +556,15 @@ python examples/run_vision_demo.py                 # webcam + Stockfish si está
 python examples/run_vision_demo.py --synthetic     # sin cámara: partida simulada
 python examples/run_vision_demo.py --no-engine     # sin Stockfish
 python examples/run_vision_demo.py --icons assets/pieces   # PNGs propios (wP.png...)
-# G inicia la partida (posición inicial), O observa, F gira el tablero,
+# G inicia la partida (posición inicial; corrige la orientación sola),
+# O observa, F gira la vista, T gira 90° el mapeo de casillas,
 # R resetea la memoria de detección, Q sale
 ```
+
+La cámara puede estar en cualquier orientación. El dashboard avisa si los
+marcadores de esquina están cruzados (los corrige solo), marca con `MEM` las
+esquinas tapadas que se están recordando y cuenta con `FUERA n` los marcadores
+detectados fuera del tablero.
 
 ### Utilidades
 

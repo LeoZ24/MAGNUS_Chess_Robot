@@ -18,10 +18,18 @@ Modos:
     PARTIDA      sigue la partida con el GameTracker y, si Stockfish está
                  disponible, muestra la jugada que el robot va a jugar.
 
+La orientación de la cámara da igual (horizontal, vertical, desde el lado de
+las blancas o de las negras): cada esquina se identifica por su ID, así que la
+homografía se adapta sola.  Lo único que importa es que los 4 marcadores de
+esquina recorran el borde del tablero (40 a8 → 41 h8 → 42 h1 → 43 a1) y no en
+zig-zag; si están cruzados, el demo lo detecta, lo corrige y lo avisa.
+
 Teclas:
-    G  iniciar partida (el tablero físico debe estar en la posición inicial)
+    G  iniciar partida (el tablero físico debe estar en la posición inicial;
+       si la orientación no coincide, se corrige sola)
     O  volver al modo observación
-    F  girar el tablero (blancas/negras abajo)
+    F  girar la VISTA del tablero renderizado (blancas/negras abajo)
+    T  girar 90° el MAPEO de casillas (si el tablero digital sale rotado)
     R  resetear la memoria de detección (si mueves la cámara o el tablero)
     Q  salir
 
@@ -57,6 +65,7 @@ import chess  # noqa: E402
 import cv2  # noqa: E402
 import numpy as np  # noqa: E402
 
+from magnus import config  # noqa: E402
 from magnus.core.messages import MoveResponse  # noqa: E402
 from magnus.vision.aruco_detector import (  # noqa: E402
     ArucoDetector,
@@ -79,7 +88,8 @@ from magnus.vision.synthetic import render_board_image  # noqa: E402
 from magnus.vision.vision_node import CameraBackend, CameraError  # noqa: E402
 
 WINDOW_TITLE = "MAGNUS - Vision"
-KEYS_HELP = "G iniciar partida · O observar · F girar tablero · R resetear deteccion · Q salir"
+KEYS_HELP = ("G iniciar partida · O observar · F girar vista · T girar mapeo · "
+             "R resetear deteccion · Q salir")
 
 # Frames consecutivos con el mismo placement antes de intentar inferir la jugada.
 STABLE_FRAMES = 8
@@ -277,6 +287,49 @@ class GameSession:
             self.planned = resp
 
 
+# --------------------------------------------------------------------------- #
+# Lectura del tablero a partir de las detecciones
+# --------------------------------------------------------------------------- #
+def read_placement(
+    pose: BoardPose, piece_dets: list[Detection]
+) -> tuple[dict[str, str], int]:
+    """``(placement, nº de marcadores fuera del tablero)``.
+
+    Los marcadores de pieza que caen fuera del área de juego se cuentan aparte
+    y NO entran en el placement: son piezas capturadas en la zona de descarte o
+    marcadores sueltos sobre la mesa.
+    """
+    placement: dict[str, str] = {}
+    off_board = 0
+    for det in piece_dets:
+        square = pose.pixel_to_square(
+            *det.center_px, tolerance_mm=config.BOARD_EDGE_TOLERANCE_MM
+        )
+        if square is None:
+            off_board += 1
+        elif square not in placement:
+            placement[square] = ARUCO_TO_PIECE[det.aruco_id]
+    return placement, off_board
+
+
+def find_orientation(
+    pose: BoardPose, piece_dets: list[Detection], target: dict[str, str]
+) -> Optional[int]:
+    """Giros de 90° que hacen coincidir lo detectado con ``target``, o ``None``.
+
+    Con los 4 marcadores puestos en el borde pero empezando en otra esquina, el
+    tablero sale rotado 90/180/270°.  Al arrancar la partida se conoce la
+    posición esperada (la inicial), así que la rotación correcta se deduce
+    probando las cuatro — sin recolocar ningún marcador.
+    """
+    for turns in range(4):
+        rotated = pose if turns == 0 else pose.rotated(turns)
+        placement, _ = read_placement(rotated, piece_dets)
+        if placement == target:
+            return turns
+    return None
+
+
 def eval_text(resp: MoveResponse) -> Optional[str]:
     if resp.mate_in is not None:
         return f"M{abs(resp.mate_in)}"
@@ -405,6 +458,8 @@ def main() -> int:
     mode = "OBSERVACION"
     message: Optional[str] = None
     pose: Optional[BoardPose] = None
+    pose_error: Optional[str] = None
+    board_turns = 0                  # giros de 90° aplicados al mapeo de casillas
     prev_placement: dict[str, str] = {}
     stable = 0
     fps = 0.0
@@ -424,26 +479,30 @@ def main() -> int:
             frame_idx += 1
 
             # --- Detección ------------------------------------------- #
+            # Las esquinas confirmadas no se olvidan aunque una torre las tape:
+            # el tablero y la cámara están fijos (ver DetectionLatch).
             confirmed = latch.update(detector.detect(frame))
             by_role = split_by_role(confirmed)
             corners = corners_by_id(by_role[MarkerRole.CORNER])
             if len(corners) == 4:
                 try:
                     pose = BoardPose.from_corner_centers(
-                        {i: d.center_px for i, d in corners.items()}
+                        {i: d.center_px for i, d in corners.items()},
+                        quarter_turns=board_turns,
                     )
-                except BoardPoseError:
-                    pose = None
+                    pose_error = None
+                except BoardPoseError as exc:
+                    pose, pose_error = None, str(exc)
 
             placement: dict[str, str] = {}
             pending_squares: list[str] = []
+            off_board = 0
             if pose is not None:
-                for det in by_role[MarkerRole.PIECE]:
-                    square = pose.pixel_to_square(*det.center_px)
-                    if square and square not in placement:
-                        placement[square] = ARUCO_TO_PIECE[det.aruco_id]
+                placement, off_board = read_placement(pose, by_role[MarkerRole.PIECE])
                 for det in split_by_role(latch.pending)[MarkerRole.PIECE]:
-                    square = pose.pixel_to_square(*det.center_px)
+                    square = pose.pixel_to_square(
+                        *det.center_px, tolerance_mm=config.BOARD_EDGE_TOLERANCE_MM
+                    )
                     if square and square not in placement:
                         pending_squares.append(square)
 
@@ -498,12 +557,15 @@ def main() -> int:
             draw_camera_overlays(camera_view, confirmed, latch.pending, pose, planned_uci)
 
             captured_w, captured_b = session.captured() if in_game else ([], [])
+            occluded = split_by_role(latch.occluded)
             state = DashboardState(
                 mode=mode,
                 turn=("w" if session.board.turn == chess.WHITE else "b") if in_game else None,
                 corners_found=len(corners),
+                corners_remembered=len(occluded[MarkerRole.CORNER]),
                 pieces_confirmed=len(by_role[MarkerRole.PIECE]),
                 pieces_pending=len(split_by_role(latch.pending)[MarkerRole.PIECE]),
+                pieces_off_board=off_board,
                 arm_seen=bool(by_role[MarkerRole.ARM]),
                 camera_label=camera_label,
                 engine_label=engine.label if engine else None,
@@ -518,8 +580,9 @@ def main() -> int:
                 captured_by_black=captured_b,
                 message=session.status_text() or message
                         or ("guion del demo terminado" if synth_done else None)
+                        or (pose.layout_warning if pose else None)
                         or (None if pose else "esquinas del tablero no visibles (IDs 40-43)"),
-                error=None,
+                error=pose_error,
                 fps=fps if not headless else None,
             )
             output = dashboard.compose(board_img, camera_view, state, KEYS_HELP)
@@ -546,20 +609,34 @@ def main() -> int:
                 return 0
             if key == ord("r"):
                 latch.reset()
-                pose = None
+                pose, pose_error = None, None
             if key == ord("f"):
                 renderer.flip()
+            if key == ord("t") and pose is not None:
+                # Gira el mapeo de casillas (no la vista): útil si los 4
+                # marcadores están bien en el borde pero empezando en otra
+                # esquina, y el tablero digital sale rotado.
+                board_turns = (board_turns + 1) % 4
+                pose = pose.rotated(1)
+                message = f"mapeo del tablero girado {board_turns * 90}°"
             if key == ord("o"):
                 mode = "OBSERVACION"
                 message = None
             if key == ord("g"):
-                if placement == GameTracker().placement():
-                    session = GameSession(robot_color)
-                    mode = "PARTIDA"
-                    message = None
-                else:
+                initial = GameTracker().placement()
+                turns = (find_orientation(pose, by_role[MarkerRole.PIECE], initial)
+                         if pose is not None else None)
+                if turns is None:
                     message = (f"coloca la posicion inicial para empezar "
                                f"({len(placement)}/32 piezas detectadas)")
+                else:
+                    if turns:               # el tablero estaba rotado: se corrige
+                        board_turns = (board_turns + turns) % 4
+                        pose = pose.rotated(turns)
+                    session = GameSession(robot_color)
+                    mode = "PARTIDA"
+                    message = (f"orientacion corregida sola ({turns * 90}°)"
+                               if turns else None)
     finally:
         camera.close()
         if engine is not None:

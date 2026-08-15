@@ -147,8 +147,18 @@ pytest tests/ -v
 `BoardVisionNode.get_board_fen()` existe y funciona (validado con imágenes
 sintéticas en `tests/test_vision_node.py`). Componentes:
 - `aruco_detector.py` — detección + enclavamiento **multi-instancia** (varios
-  marcadores comparten ID; se rastrean por posición), los 3 roles separados
-- `board_pose.py` — homografía mm↔px con las 4 esquinas (40=a8, 41=h8, 42=h1, 43=a1)
+  marcadores comparten ID; se rastrean por posición), los 3 roles separados.
+  Las esquinas son estáticas y de ID único: no se olvidan nunca (se recuerda su
+  última posición si una pieza las tapa) y una detección duplicada lejos de una
+  esquina ya confirmada se ignora
+- `board_pose.py` — homografía mm↔px con las 4 esquinas (40=a8, 41=h8, 42=h1, 43=a1).
+  **La orientación de la cámara es irrelevante** (cada esquina se identifica
+  por su ID); lo que importa es el orden cíclico de los IDs alrededor del
+  borde. `deduce_corner_layout()` deduce de la geometría dónde está pegado cada
+  marcador, así que dos esquinas cruzadas se corrigen solas (con aviso) en vez
+  de producir una homografía degenerada. `pixel_to_square()` acepta una
+  tolerancia de borde (`config.BOARD_EDGE_TOLERANCE_MM`) y descarta lo que
+  quede fuera del área de juego
 - `piece_map.py` — mapeo oficial ID→pieza POR TIPO (ver sección ArUco)
 - `fen_builder.py` — placement → texto FEN (puro, sin dependencias)
 - `game_state.py` — `GameTracker`: deduce la jugada del humano comparando el
@@ -202,6 +212,13 @@ con la misma lógica:
 ARUCO_DICT = aruco.DICT_4X4_50      # mismo diccionario para los tres roles
 CONFIRM_N  = 5                       # frames consecutivos para confirmar detección
 ```
+
+⚠️ **Las 4 esquinas se pegan RECORRIENDO EL BORDE**, no en orden de lectura:
+`40 (a8) → 41 (h8) → 42 (h1) → 43 (a1)` da la vuelta al tablero. Ponerlas en
+zig-zag cruza dos esquinas; la visión lo detecta y lo corrige sola (avisa), pero
+el montaje correcto evita la ambigüedad. La orientación de la cámara **no**
+importa (apaisada, vertical, desde blancas o desde negras): cada esquina se
+identifica por su ID.
 
 ⚠️ **El marcador de pieza identifica el TIPO, no la pieza individual**: todos
 los peones blancos llevan el mismo marcador (ID 0), las dos torres negras el
@@ -338,7 +355,7 @@ magnus/
     └── arm_node.py          # MoveResponse → secuencia de sub-movimientos
     (positions.json — NO existe: se graba calibrando el brazo real)
 examples/          # demos ejecutables (engine, brazo, visión, pipeline completo)
-tests/             # 76+ tests; todos corren sin hardware
+tests/             # 165+ tests; todos corren sin hardware
 ```
 
 ---

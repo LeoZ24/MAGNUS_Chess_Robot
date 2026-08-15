@@ -78,10 +78,18 @@ def main() -> int:
         cv2.imwrite(str(out / filename), img)
         count += 1
 
-    # 4 esquinas del tablero.
+    # 4 esquinas del tablero.  El orden de los IDs RECORRE EL BORDE
+    # (40 a8 -> 41 h8 -> 42 h1 -> 43 a1), no es orden de lectura: ponerlos en
+    # zig-zag cruza dos esquinas del tablero.
     for aruco_id, corner in CORNER_NAMES.items():
         filename = f"corner_{aruco_id}_{corner}.png"
-        img = make_marker_png(dictionary, aruco_id, f"{aruco_id}: esquina {corner}", args.size)
+        following = CORNER_NAMES[
+            config.ARUCO_IDS_BOARD_CORNERS[
+                (config.ARUCO_IDS_BOARD_CORNERS.index(aruco_id) + 1) % 4
+            ]
+        ]
+        label = f"{aruco_id}: esquina {corner}  (siguiente por el borde: {following})"
+        img = make_marker_png(dictionary, aruco_id, label, args.size)
         cv2.imwrite(str(out / filename), img)
         count += 1
 
@@ -96,6 +104,10 @@ def main() -> int:
           f"(las etiquetas indican las copias a imprimir: {total_pieces} piezas en total).")
     print("Imprimir a tamaño real: el marcador de cada pieza debe caber en la "
           f"tapa de {config.PIECE_DIAMETER_MM} mm con su anillo blanco.")
+    print("Esquinas: pegarlas RECORRIENDO EL BORDE "
+          f"({' -> '.join(f'{i} {CORNER_NAMES[i]}' for i in config.ARUCO_IDS_BOARD_CORNERS)}"
+          " -> vuelta al primero), con el centro del marcador en la esquina "
+          "exterior del área de juego.")
     return 0
 
 

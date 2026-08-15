@@ -51,7 +51,7 @@ class BoardNotFoundError(VisionNodeError):
 
 
 class AmbiguousBoardError(VisionNodeError):
-    """Dos piezas detectadas en la misma casilla, o pieza fuera del tablero."""
+    """Dos piezas detectadas en la misma casilla."""
 
 
 # --------------------------------------------------------------------------- #
@@ -154,12 +154,15 @@ class BoardVisionNode:
         calibration: Optional[CameraCalibration] = None,
         tracker: Optional[GameTracker] = None,
         confirm_n: int = config.DETECTION_CONFIRM_N,
+        edge_tolerance_mm: float = config.BOARD_EDGE_TOLERANCE_MM,
     ):
         self._camera = camera
         self._detector = detector or ArucoDetector()
         self._calibration = calibration
         self._tracker = tracker or GameTracker()
         self._confirm_n = confirm_n
+        self._edge_tolerance_mm = edge_tolerance_mm
+        self._pose: Optional[BoardPose] = None
         self._started = False
 
     # ------------------------------------------------------------------ #
@@ -188,6 +191,19 @@ class BoardVisionNode:
     def tracker(self) -> GameTracker:
         return self._tracker
 
+    @property
+    def board_pose(self) -> Optional[BoardPose]:
+        """Última pose válida del tablero (``None`` si nunca se calculó)."""
+        return self._pose
+
+    def reset_board_pose(self) -> None:
+        """Olvida la pose memorizada: obliga a re-detectar las 4 esquinas.
+
+        Llamar solo si de verdad se movió la cámara o el tablero.
+        """
+        self._pose = None
+        logger.info("Pose del tablero olvidada; se recalculará con las 4 esquinas.")
+
     # ------------------------------------------------------------------ #
     # Escaneo
     # ------------------------------------------------------------------ #
@@ -213,37 +229,65 @@ class BoardVisionNode:
         logger.debug("Escaneo: %d marcadores confirmados.", len(confirmed))
         return confirmed
 
-    def get_board_placement(self, max_frames: Optional[int] = None) -> dict[str, str]:
-        """Escanea y devuelve ``{"e4": "P", ...}`` (casilla -> símbolo FEN)."""
-        confirmed = self.scan(max_frames)
-        by_role = split_by_role(confirmed)
+    def update_board_pose(self, detections: list[Detection]) -> BoardPose:
+        """Recalcula la pose con las esquinas detectadas, o reutiliza la anterior.
 
-        corners = corners_by_id(by_role[MarkerRole.CORNER])
-        if len(corners) < 4:
-            raise BoardNotFoundError(
-                f"Solo {len(corners)}/4 esquinas del tablero detectadas "
-                f"(IDs esperados: {config.ARUCO_IDS_BOARD_CORNERS})."
+        Como el tablero y la cámara están fijos, la última pose válida se
+        memoriza: si una pieza tapa un marcador de esquina (típico: una torre
+        sobre la esquina) se sigue usando la homografía anterior en vez de
+        perder el tablero.  Usar :meth:`reset_board_pose` si algo se movió.
+
+        Raises:
+            BoardNotFoundError: si faltan esquinas y no hay ninguna pose previa.
+        """
+        corners = corners_by_id(split_by_role(detections)[MarkerRole.CORNER])
+        if len(corners) == 4:
+            self._pose = BoardPose.from_corner_centers(
+                {i: det.center_px for i, det in corners.items()}
             )
-        pose = BoardPose.from_corner_centers(
-            {i: det.center_px for i, det in corners.items()}
+            return self._pose
+        if self._pose is not None:
+            logger.debug(
+                "Solo %d/4 esquinas visibles; se usa la pose memorizada.", len(corners)
+            )
+            return self._pose
+        raise BoardNotFoundError(
+            f"Solo {len(corners)}/4 esquinas del tablero detectadas "
+            f"(IDs esperados: {config.ARUCO_IDS_BOARD_CORNERS})."
         )
 
+    def get_board_placement(self, max_frames: Optional[int] = None) -> dict[str, str]:
+        """Escanea y devuelve ``{"e4": "P", ...}`` (casilla -> símbolo FEN).
+
+        Los marcadores de pieza que caen **fuera** del área de juego se ignoran
+        (con un aviso por log): es lo normal para las piezas ya capturadas en la
+        zona de descarte o para marcadores sueltos sobre la mesa.
+        """
+        confirmed = self.scan(max_frames)
+        pose = self.update_board_pose(confirmed)
+
         placement: dict[str, str] = {}
-        for det in by_role[MarkerRole.PIECE]:
+        outside = 0
+        for det in split_by_role(confirmed)[MarkerRole.PIECE]:
             symbol = ARUCO_TO_PIECE[det.aruco_id]
-            square = pose.pixel_to_square(*det.center_px)
+            square = pose.pixel_to_square(
+                *det.center_px, tolerance_mm=self._edge_tolerance_mm
+            )
             if square is None:
-                raise AmbiguousBoardError(
-                    f"Una pieza {symbol!r} (ID {det.aruco_id}) se detectó fuera "
-                    f"del tablero, en el píxel ({det.center_px[0]:.0f}, "
-                    f"{det.center_px[1]:.0f})."
+                outside += 1
+                logger.debug(
+                    "Pieza %r (ID %d) fuera del tablero en (%.0f, %.0f): ignorada.",
+                    symbol, det.aruco_id, det.center_px[0], det.center_px[1],
                 )
+                continue
             if square in placement:
                 raise AmbiguousBoardError(
                     f"Dos piezas en {square}: {placement[square]!r} y {symbol!r}."
                 )
             placement[square] = symbol
 
+        if outside:
+            logger.info("%d marcadores de pieza fuera del tablero (ignorados).", outside)
         logger.info("Placement detectado: %d piezas.", len(placement))
         return placement
 

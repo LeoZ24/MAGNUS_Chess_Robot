@@ -78,3 +78,19 @@ DETECTION_MATCH_RADIUS_FACTOR: float = 1.5
 # Un marcador confirmado que deja de verse este número de frames consecutivos
 # se olvida (la pieza se movió o se retiró).  0 = no olvidar nunca.
 DETECTION_FORGET_FRAMES: int = 20
+
+# Las esquinas son ESTÁTICAS: ni la cámara ni el tablero se mueven durante la
+# partida, así que una esquina confirmada se recuerda en su última posición
+# aunque una torre la tape (0 = no olvidar nunca).  Si de verdad se mueve la
+# cámara o el tablero hay que llamar a DetectionLatch.reset() / BoardVisionNode
+# .reset_board_pose() (tecla R en el demo de visión).
+DETECTION_FORGET_FRAMES_CORNERS: int = 0
+
+# Tolerancia al borde del tablero (mm).  Un marcador de pieza cuyo centro cae
+# fuera del área de juego pero a menos de esta distancia se asigna a la casilla
+# del borde: absorbe el error de la homografía y de las esquinas mal centradas.
+# Más allá, la pieza está FUERA del tablero y se ignora — es lo normal para las
+# piezas capturadas en la zona de descarte o para marcadores sueltos en la mesa.
+# Debe quedar muy por debajo de media casilla (16 mm) para no "meter" en el
+# tablero marcadores que están al lado.
+BOARD_EDGE_TOLERANCE_MM: float = 6.0
