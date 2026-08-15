@@ -243,6 +243,7 @@ class GameSession:
         self.requested_fen: Optional[str] = None
         self.last_rejected: Optional[dict[str, str]] = None
         self.last_mover: Optional[str] = None          # "robot" | "human"
+        self.last_move_detail: Optional[MoveResponse] = None
         self.announced_uci: Optional[str] = None       # jugada ya narrada
         self.pending_evals: dict[str, str] = {}        # fen -> "after_robot"|"after_human"
         self.end_announced = False
@@ -302,6 +303,7 @@ class GameSession:
         self.history_san.append(san)
         self.last_rejected = None
         self.last_mover = "robot" if before.turn == self.robot_color else "human"
+        self.last_move_detail = move_to_response(before, move, san, self.board)
         # La jugada planificada dejó de ser vigente si ya se ejecutó (o cambió).
         self.planned = None
         return san
@@ -362,6 +364,38 @@ def find_orientation(
         if placement == target:
             return turns
     return None
+
+
+def move_to_response(
+    before: chess.Board, move: chess.Move, san: str, after: chess.Board
+) -> MoveResponse:
+    """Metadatos de una jugada vista por la cámara, para poder narrarla.
+
+    El engine rellena esto para SUS jugadas; las del rival las deduce la visión,
+    así que aquí se reconstruyen los mismos campos a partir del tablero de antes
+    y de después (captura, al paso, enroque, promoción, jaque…).
+    """
+    moved = before.piece_at(move.from_square)
+    captured = before.piece_at(move.to_square)
+    if before.is_en_passant(move):
+        # En la captura al paso la pieza comida NO está en la casilla de destino.
+        captured = chess.Piece(chess.PAWN, not before.turn)
+    return MoveResponse(
+        uci=move.uci(),
+        san=san,
+        from_square=chess.square_name(move.from_square),
+        to_square=chess.square_name(move.to_square),
+        piece=moved.symbol() if moved else "",
+        side_to_move="white" if before.turn == chess.WHITE else "black",
+        is_capture=before.is_capture(move),
+        captured_piece=captured.symbol() if captured else None,
+        is_en_passant=before.is_en_passant(move),
+        is_castling=before.is_castling(move),
+        is_kingside_castle=before.is_kingside_castling(move),
+        promotion=chess.piece_symbol(move.promotion) if move.promotion else None,
+        is_check=after.is_check(),
+        is_checkmate=after.is_checkmate(),
+    )
 
 
 def _handle_analysis(voice, session, analysis, fen: str) -> None:
@@ -562,6 +596,7 @@ def main() -> int:
     pose_error: Optional[str] = None
     board_turns = 0                  # giros de 90° aplicados al mapeo de casillas
     prev_placement: dict[str, str] = {}
+    last_activity = time.monotonic()
     stable = 0
     fps = 0.0
     frame_idx = 0
@@ -622,6 +657,19 @@ def main() -> int:
                     san = session.try_apply_placement(placement)
                     if san:
                         message = None
+                        last_activity = time.monotonic()
+                        if voice is not None and session.last_mover == "human":
+                            voice.confirm_board_fixed()
+                            detail = session.last_move_detail
+                            if config.VOICE_ANNOUNCE_HUMAN_MOVES and detail:
+                                # La narración ya menciona captura y jaque, así
+                                # que no se añaden reacciones sueltas encima.
+                                voice.announce_move(detail, speaker="human")
+                            elif detail:
+                                if detail.is_capture:
+                                    voice.react_to_capture()
+                                if detail.is_check:
+                                    voice.react_to_check()
                         # Se analiza la posición resultante para poder comentar:
                         # tras la jugada del robot queda la referencia, y tras la
                         # del humano se compara contra ella (Δ de centipeones).
@@ -637,6 +685,10 @@ def main() -> int:
                 if placement and placement == session.last_rejected \
                         and stable >= STABLE_FRAMES * 4:
                     message = "posicion no corresponde a ninguna jugada legal"
+                    if voice is not None:
+                        # Distingue jugada ilegal de pieza en la mano o tablero
+                        # revuelto, y no repite el aviso mientras no cambie.
+                        voice.warn_board_problem(session.tracker.placement(), placement)
             if mode == "PARTIDA" and engine is not None:
                 fen = session.want_engine_move()
                 if fen:
@@ -652,10 +704,21 @@ def main() -> int:
 
             # --- Voz --------------------------------------------------- #
             if voice is not None and mode == "PARTIDA":
+                # Recordatorio amable si al rival se le va el santo al cielo.
+                human_to_move = session.board.turn != session.robot_color
+                idle = time.monotonic() - last_activity
+                if (config.VOICE_IDLE_PROMPT_S and human_to_move
+                        and not session.board.is_game_over()
+                        and idle > config.VOICE_IDLE_PROMPT_S
+                        and not voice.is_speaking):
+                    voice.say_waiting()
+                    last_activity = time.monotonic()
                 # Narrar la jugada planificada, una sola vez.
                 if session.planned and session.planned.uci != session.announced_uci:
                     session.announced_uci = session.planned.uci
                     voice.announce_move(session.planned)
+                    voice.say_your_turn()
+                    last_activity = time.monotonic()
                 # Final de partida.
                 if session.board.is_game_over() and not session.end_announced:
                     session.end_announced = True

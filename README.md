@@ -506,6 +506,28 @@ MAGNUS habla en masculino, así que la voz por defecto de macOS es **Juan**
 (es_MX); si no está instalada, el backend busca otra voz masculina en español
 en vez de quedarse mudo.
 
+### Qué más dice
+
+Además de narrar y evaluar, el robot avisa cuando el tablero no cuadra, y
+distingue **qué** está pasando en vez de soltar un genérico "no entiendo":
+
+| Situación detectada | Qué dice |
+|---|---|
+| Falta una pieza, no hay ninguna nueva | «¿Tienes una pieza en la mano? Colócala cuando decidas.» |
+| Una pieza cambió de casilla pero la jugada no es legal | «Esa jugada no es legal. Devuelve la pieza a su sitio.» |
+| Demasiadas diferencias (mano encima, piezas caídas) | «Algo no cuadra en el tablero. Revísalo, por favor.» |
+| El tablero vuelve a ser correcto | «Ahora sí. Seguimos.» |
+
+El aviso **no se repite** mientras el problema siga igual: durante una jugada
+larga saldría en bucle. La clasificación vive en `commentary.diagnose_placement()`
+y es una función pura sobre dos diccionarios de casillas, así que se testea sin
+cámara ni tablero.
+
+También narra las jugadas del rival (`VOICE_ANNOUNCE_HUMAN_MOVES`), recuerda con
+amabilidad que le toca si tarda mucho (`VOICE_IDLE_PROMPT_S`), saluda, dice «te
+toca» tras mover y despide la partida. Cada situación tiene entre 3 y 7
+formulaciones distintas y nunca repite la última usada.
+
 ### Detalles que importan
 
 - **Nunca se le pasa notación cruda al TTS**: `"g1"` se convierte en `"ge uno"`

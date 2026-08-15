@@ -186,9 +186,13 @@ El robot narra sus jugadas y comenta las del rival, en español.
   el falso: **la voz nunca puede tumbar una demostración**
 - `speech_text.py` — notación → texto pronunciable (`"g1"` → `"ge uno"`,
   `"N"` → `"caballo"`). **Nunca pasar SAN ni casillas crudas al TTS**
-- `phrases.py` — frases con variantes + `PhrasePicker` (no repite la última)
+- `phrases.py` — frases con variantes (3-7 por situación) + `PhrasePicker` (no
+  repite la última). Hay tests que exigen un mínimo de variantes por grupo, que
+  no haya duplicados y que ninguna frase lleve notación cruda
 - `commentary.py` — Δ de centipeones → calidad de la jugada. Umbrales en
-  `config.py` (`COMMENT_*`)
+  `config.py` (`COMMENT_*`). Además `diagnose_placement()` distingue jugada
+  ilegal / pieza en la mano / tablero irreconocible comparando el placement
+  esperado con el detectado (función pura, sin `python-chess`)
 - `voice_node.py` — `VoiceNode`: cola + hilo propio (hablar tarda ~1 s y la
   visión corre a ~14 fps: **jamás hablar en el bucle principal**)
 

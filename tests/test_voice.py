@@ -347,11 +347,38 @@ def test_new_game_resets_the_commentary_state():
 
 
 def test_game_end_announcement():
+    """Se comprueba el GRUPO de frases, no una redacción concreta.
+
+    Atarlo a una palabra hace que el test se rompa cada vez que se añade una
+    variante nueva, que es justo lo que se quiere poder hacer sin miedo.
+    """
+    from magnus.voice import phrases as ph
+
     backend = FakeSpeechBackend()
     with VoiceNode(backend=backend) as voz:
         voz.announce_game_end(is_checkmate=True, winner_is_robot=False)
         wait_until_spoken(backend, 1)
-    assert "anaste" in backend.spoken[0] or "ganaste" in backend.spoken[0].lower()
+    assert backend.spoken[0] in ph.HUMAN_WINS
+
+
+def test_game_end_announcement_when_the_robot_wins():
+    from magnus.voice import phrases as ph
+
+    backend = FakeSpeechBackend()
+    with VoiceNode(backend=backend) as voz:
+        voz.announce_game_end(is_checkmate=True, winner_is_robot=True)
+        wait_until_spoken(backend, 1)
+    assert backend.spoken[0] in ph.ROBOT_WINS
+
+
+def test_draw_announcement():
+    from magnus.voice import phrases as ph
+
+    backend = FakeSpeechBackend()
+    with VoiceNode(backend=backend) as voz:
+        voz.announce_game_end(is_checkmate=False)
+        wait_until_spoken(backend, 1)
+    assert backend.spoken[0] in ph.DRAW
 
 
 # --------------------------------------------------------------------------- #
@@ -569,3 +596,133 @@ def test_no_voices_downloaded_returns_none(tmp_path, monkeypatch):
 
     monkeypatch.setattr(backend_module, "_VOICE_DIRS", (tmp_path,))
     assert backend_module.find_piper_model("cualquiera") is None
+
+
+# --------------------------------------------------------------------------- #
+# Problemas del tablero: jugada ilegal, pieza en la mano, posición rara
+# --------------------------------------------------------------------------- #
+POSICION = {"e1": "K", "e8": "k", "d4": "Q", "a2": "P"}
+
+
+def test_lifted_piece_is_detected():
+    """Falta una pieza y no hay ninguna nueva: la tiene en la mano."""
+    from magnus.voice.commentary import BoardProblem, diagnose_placement
+
+    sin_peon = {sq: p for sq, p in POSICION.items() if sq != "a2"}
+    assert diagnose_placement(POSICION, sin_peon) is BoardProblem.PIECE_IN_HAND
+
+
+def test_illegal_move_is_detected():
+    """Una pieza salió de su casilla y apareció en otra."""
+    from magnus.voice.commentary import BoardProblem, diagnose_placement
+
+    movida = {sq: p for sq, p in POSICION.items() if sq != "a2"}
+    movida["a5"] = "P"
+    assert diagnose_placement(POSICION, movida) is BoardProblem.ILLEGAL_MOVE
+
+
+def test_capture_on_an_occupied_square_reads_as_illegal_move():
+    """Sustituir la pieza de una casilla también es un intento de jugada."""
+    from magnus.voice.commentary import BoardProblem, diagnose_placement
+
+    encima = dict(POSICION)
+    encima["d4"] = "P"
+    assert diagnose_placement(POSICION, encima) is BoardProblem.ILLEGAL_MOVE
+
+
+def test_scrambled_board_is_confusing():
+    from magnus.voice.commentary import BoardProblem, diagnose_placement
+
+    assert diagnose_placement(POSICION, {"e1": "K"}) is BoardProblem.CONFUSING
+
+
+def test_hand_covering_the_board_is_confusing():
+    """Una mano encima tapa varias piezas a la vez."""
+    from magnus.voice.commentary import BoardProblem, diagnose_placement
+
+    tapado = {"e1": "K", "e8": "k"}
+    assert diagnose_placement(POSICION, tapado) is BoardProblem.CONFUSING
+
+
+def test_board_warning_is_not_repeated_while_the_problem_persists():
+    """El aviso saldría en cada frame mientras el rival piensa con la pieza en la mano."""
+    com = Commentator(robot_side="black")
+    sin_peon = {sq: p for sq, p in POSICION.items() if sq != "a2"}
+    assert com.comment_board_problem(POSICION, sin_peon) is not None
+    assert com.comment_board_problem(POSICION, sin_peon) is None
+
+
+def test_a_different_problem_does_get_a_new_warning():
+    com = Commentator(robot_side="black")
+    sin_peon = {sq: p for sq, p in POSICION.items() if sq != "a2"}
+    com.comment_board_problem(POSICION, sin_peon)
+    assert com.comment_board_problem(POSICION, {"e1": "K"}) is not None
+
+
+def test_board_fixed_only_speaks_after_a_warning():
+    com = Commentator(robot_side="black")
+    assert com.board_is_fine_again() is None          # nunca hubo problema
+    sin_peon = {sq: p for sq, p in POSICION.items() if sq != "a2"}
+    com.comment_board_problem(POSICION, sin_peon)
+    assert com.board_is_fine_again() is not None      # se avisa de que ya está
+    assert com.board_is_fine_again() is None          # y no se repite
+
+
+def test_voice_node_warns_about_an_illegal_move():
+    backend = FakeSpeechBackend()
+    movida = {sq: p for sq, p in POSICION.items() if sq != "a2"}
+    movida["a5"] = "P"
+    with VoiceNode(backend=backend) as voz:
+        frase = voz.warn_board_problem(POSICION, movida)
+        wait_until_spoken(backend, 1)
+    from magnus.voice import phrases as ph
+
+    assert frase in ph.ILLEGAL_MOVE
+
+
+def test_new_game_forgets_the_pending_board_problem():
+    voz = VoiceNode(backend=FakeSpeechBackend())
+    sin_peon = {sq: p for sq, p in POSICION.items() if sq != "a2"}
+    voz.warn_board_problem(POSICION, sin_peon)
+    voz.new_game()
+    assert voz.warn_board_problem(POSICION, sin_peon) is not None
+
+
+# --------------------------------------------------------------------------- #
+# Calidad del catálogo de frases
+# --------------------------------------------------------------------------- #
+def all_phrase_groups():
+    """Todos los grupos de frases definidos en phrases.py."""
+    from magnus.voice import phrases as ph
+
+    return {
+        name: value for name, value in vars(ph).items()
+        if name.isupper() and isinstance(value, tuple)
+    }
+
+
+def test_every_situation_has_several_ways_of_saying_it():
+    """Con una sola variante el robot suena a disco rayado."""
+    escasos = {n: len(v) for n, v in all_phrase_groups().items() if len(v) < 3}
+    assert not escasos, f"Grupos con menos de 3 variantes: {escasos}"
+
+
+def test_no_repeated_phrases_within_a_group():
+    for name, group in all_phrase_groups().items():
+        assert len(set(group)) == len(group), f"Frases repetidas en {name}"
+
+
+def test_phrases_are_speakable_not_notation():
+    """Nada de notación cruda: al TTS solo le llega texto pronunciable."""
+    import re
+
+    for name, group in all_phrase_groups().items():
+        for phrase in group:
+            assert not re.search(r"\b[a-h][1-8]\b", phrase), f"Casilla cruda en {name}: {phrase}"
+            assert phrase.strip(), f"Frase vacía en {name}"
+
+
+def test_voice_settings_exist():
+    assert config.VOICE_QUEUE_MAX >= 1
+    assert isinstance(config.VOICE_ANNOUNCE_HUMAN_MOVES, bool)
+    assert config.VOICE_IDLE_PROMPT_S >= 0

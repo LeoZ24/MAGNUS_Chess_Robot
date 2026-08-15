@@ -139,5 +139,14 @@ VOICE_MACOS_VOICE: str = "Juan"
 VOICE_MACOS_RATE: int = 185          # palabras por minuto
 
 # Frases en cola como máximo; si se llena, se descartan las más viejas para no
-# quedarse hablando de jugadas que ya pasaron.
-VOICE_QUEUE_MAX: int = 3
+# quedarse hablando de jugadas que ya pasaron.  Ahora el robot habla bastante
+# (narra ambas jugadas y comenta), así que la cola aguanta un poco más.
+VOICE_QUEUE_MAX: int = 5
+
+# Narrar también las jugadas del rival ("Moviste el peón de e dos a e cuatro").
+# Hace al robot mucho más conversador y ayuda al público a seguir la partida.
+VOICE_ANNOUNCE_HUMAN_MOVES: bool = True
+
+# Segundos sin que el rival mueva antes de recordárselo con amabilidad.
+# 0 desactiva el recordatorio.
+VOICE_IDLE_PROMPT_S: float = 45.0

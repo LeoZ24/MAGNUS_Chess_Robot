@@ -25,7 +25,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
+from typing import Mapping, Optional
 
 from .. import config
 from . import phrases
@@ -59,6 +59,41 @@ class Advantage(Enum):
     ROBOT = "robot"
     EQUAL = "igualada"
     HUMAN = "humano"
+
+
+class BoardProblem(Enum):
+    """Por qué el tablero detectado no encaja con ninguna jugada legal."""
+
+    ILLEGAL_MOVE = "jugada ilegal"        # una pieza cambió de sitio, pero no vale
+    PIECE_IN_HAND = "pieza levantada"     # falta una pieza: la tiene en la mano
+    CONFUSING = "posición irreconocible"  # demasiadas diferencias para adivinar
+
+
+def diagnose_placement(
+    expected: Mapping[str, str], detected: Mapping[str, str]
+) -> BoardProblem:
+    """Deduce QUÉ pasa cuando el tablero no corresponde a ninguna jugada legal.
+
+    No decide si la jugada es legal —de eso ya se encargó el ``GameTracker``—,
+    solo mira en qué se diferencian las dos posiciones para poder avisar de algo
+    útil en vez de un genérico "no entiendo el tablero":
+
+    * falta una pieza y no hay ninguna nueva -> la tiene en la mano
+    * una pieza salió de una casilla y apareció en otra -> intentó una jugada ilegal
+    * cualquier otra cosa -> posición irreconocible (mano encima, piezas caídas…)
+
+    Función **pura** sobre dos diccionarios ``{casilla: símbolo}``: se testea sin
+    tablero, sin cámara y sin motor.
+    """
+    vacated = [sq for sq in expected if sq not in detected]
+    appeared = [sq for sq in detected if sq not in expected]
+    replaced = [sq for sq in detected if sq in expected and detected[sq] != expected[sq]]
+
+    if not appeared and not replaced and len(vacated) == 1:
+        return BoardProblem.PIECE_IN_HAND
+    if len(vacated) <= 1 and len(appeared) + len(replaced) <= 1:
+        return BoardProblem.ILLEGAL_MOVE
+    return BoardProblem.CONFUSING
 
 
 @dataclass(frozen=True)
@@ -131,6 +166,12 @@ _QUALITY_PHRASES = {
     MoveQuality.GREAT: phrases.GREAT,
 }
 
+_PROBLEM_PHRASES = {
+    BoardProblem.ILLEGAL_MOVE: phrases.ILLEGAL_MOVE,
+    BoardProblem.PIECE_IN_HAND: phrases.PIECE_IN_HAND,
+    BoardProblem.CONFUSING: phrases.POSITION_CONFUSING,
+}
+
 _ADVANTAGE_PHRASES = {
     Advantage.ROBOT: phrases.ROBOT_WINNING,
     Advantage.HUMAN: phrases.ROBOT_LOSING,
@@ -163,6 +204,7 @@ class Commentator:
         self._previous_cp: Optional[int] = None
         self._last_advantage: Optional[Advantage] = None
         self._moves_since_advantage = 0
+        self._last_problem: Optional[BoardProblem] = None
 
     # ------------------------------------------------------------------ #
     # Estado
@@ -178,6 +220,7 @@ class Commentator:
         self._previous_cp = None
         self._last_advantage = None
         self._moves_since_advantage = 0
+        self._last_problem = None
         self.picker.reset()
 
     # ------------------------------------------------------------------ #
@@ -230,6 +273,27 @@ class Commentator:
         self._last_advantage = advantage
         self._moves_since_advantage = 0
         return self.picker.pick(_ADVANTAGE_PHRASES[advantage])
+
+    def comment_board_problem(
+        self, expected: Mapping[str, str], detected: Mapping[str, str]
+    ) -> Optional[str]:
+        """Avisa de por qué el tablero no encaja, sin repetirse.
+
+        Devuelve ``None`` si ya se avisó de ese mismo problema y todavía no se
+        ha resuelto: durante una jugada larga el aviso se dispararía en bucle.
+        """
+        problem = diagnose_placement(expected, detected)
+        if problem is self._last_problem:
+            return None
+        self._last_problem = problem
+        return self.picker.pick(_PROBLEM_PHRASES[problem])
+
+    def board_is_fine_again(self) -> Optional[str]:
+        """Frase de "ya está bien" si venía de un aviso; ``None`` si no."""
+        if self._last_problem is None:
+            return None
+        self._last_problem = None
+        return self.picker.pick(phrases.BOARD_FIXED)
 
     def comment_game_end(
         self, is_checkmate: bool, winner_is_robot: bool = False

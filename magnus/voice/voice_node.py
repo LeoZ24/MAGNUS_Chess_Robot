@@ -33,7 +33,7 @@ from .. import config
 from ..core.messages import MoveResponse
 from . import phrases
 from .backend import FakeSpeechBackend, SpeechBackend, SpeechError, default_backend
-from .commentary import Commentator, PositionEval
+from .commentary import BoardProblem, Commentator, PositionEval
 from .phrases import PhrasePicker
 from .speech_text import describe_move
 
@@ -187,6 +187,37 @@ class VoiceNode:
         frase = self.commentator.comment_advantage(position)
         self.say(frase)
         return frase
+
+    def warn_board_problem(self, expected, detected) -> Optional[str]:
+        """Avisa de una jugada ilegal, una pieza en la mano o un tablero raro.
+
+        Solo habla cuando el problema **cambia**: mientras el rival tiene la
+        pieza en la mano el aviso se repetiría en cada frame.
+        """
+        frase = self.commentator.comment_board_problem(expected, detected)
+        self.say(frase)
+        return frase
+
+    def confirm_board_fixed(self) -> Optional[str]:
+        """Da el visto bueno si veníamos de avisar de un problema."""
+        frase = self.commentator.board_is_fine_again()
+        self.say(frase)
+        return frase
+
+    def say_waiting(self) -> None:
+        """Recuerda con amabilidad que le toca al rival."""
+        self.say(self.picker.pick(phrases.WAITING))
+
+    def say_your_turn(self) -> None:
+        self.say(self.picker.pick(phrases.YOUR_TURN))
+
+    def react_to_check(self) -> None:
+        """El rival acaba de dar jaque al robot."""
+        self.say(self.picker.pick(phrases.ROBOT_IN_CHECK))
+
+    def react_to_capture(self) -> None:
+        """El rival acaba de capturar una pieza del robot."""
+        self.say(self.picker.pick(phrases.ROBOT_LOST_PIECE))
 
     def announce_game_end(self, is_checkmate: bool, winner_is_robot: bool = False) -> None:
         self.say_now(self.commentator.comment_game_end(is_checkmate, winner_is_robot))
