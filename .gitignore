@@ -8,3 +8,15 @@ venv/
 
 # macOS
 .DS_Store
+
+# Modelos de voz de Piper y audio generado.
+# Pesan 60-110 MB cada uno y GitHub RECHAZA los archivos de más de 100 MB.
+# No hacen falta en el repo: se descargan cuando se necesitan con
+#   python3 -m piper.download_voices <voz> --data-dir voices/
+voices/
+*.onnx
+*.onnx.json
+*.wav
+
+# Marcadores ArUco generados (se regeneran con examples/generate_aruco_markers.py)
+aruco_markers/

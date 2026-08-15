@@ -618,19 +618,27 @@ class DashboardState:
     message: Optional[str] = None               # aviso (ámbar)
     error: Optional[str] = None                 # error (rojo)
     fps: Optional[float] = None
+    voice_phrase: Optional[str] = None          # lo último que dijo el robot
+    voice_muted: bool = False
+
+
+def _fitted_rect(frame_shape: tuple[int, ...], box_w: int,
+                 box_h: int) -> tuple[int, int, int, int]:
+    """``(x0, y0, ancho, alto)`` que ocupa la imagen dentro de su caja."""
+    h, w = frame_shape[:2]
+    scale = min(box_w / w, box_h / h)
+    new_w, new_h = max(1, int(w * scale)), max(1, int(h * scale))
+    return (box_w - new_w) // 2, (box_h - new_h) // 2, new_w, new_h
 
 
 def _fit_into(frame: np.ndarray, box_w: int, box_h: int,
               bg: tuple[int, int, int]) -> np.ndarray:
     """Escala ``frame`` para caber en (box_w × box_h) con letterboxing."""
     out = np.full((box_h, box_w, 3), bg, dtype=np.uint8)
-    h, w = frame.shape[:2]
-    scale = min(box_w / w, box_h / h)
-    new_w, new_h = max(1, int(w * scale)), max(1, int(h * scale))
-    resized = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
-    x0 = (box_w - new_w) // 2
-    y0 = (box_h - new_h) // 2
-    out[y0 : y0 + new_h, x0 : x0 + new_w] = resized
+    x0, y0, new_w, new_h = _fitted_rect(frame.shape, box_w, box_h)
+    out[y0 : y0 + new_h, x0 : x0 + new_w] = cv2.resize(
+        frame, (new_w, new_h), interpolation=cv2.INTER_AREA
+    )
     return out
 
 
@@ -812,6 +820,25 @@ class Dashboard:
                 _put_text(img, line, (x + 12, msg_y), 0.44, color, 1)
                 msg_y += 16
 
+    def _subtitle(self, img: np.ndarray, x: int, bottom: int, width: int,
+                  state: DashboardState) -> None:
+        """Banda inferior con la última frase dicha por el robot."""
+        if not state.voice_phrase:
+            return
+        theme = self.theme
+        prefix = "[voz en silencio] " if state.voice_muted else ""
+        lines = _wrap_text(prefix + state.voice_phrase, width - 28, 0.5)[-2:]
+        band_h = 12 + 20 * len(lines)
+        top = max(0, bottom - band_h)
+        # Fondo translúcido para que el texto se lea sobre cualquier imagen.
+        overlay = img[top:bottom, x : x + width].copy()
+        cv2.rectangle(overlay, (0, 0), (width, band_h), (0, 0, 0), -1)
+        cv2.addWeighted(overlay, 0.55, img[top:bottom, x : x + width], 0.45, 0,
+                        dst=img[top:bottom, x : x + width])
+        color = theme.text_dim if state.voice_muted else theme.accent
+        for i, line in enumerate(lines):
+            _put_text(img, line, (x + 14, top + 22 + 20 * i), 0.5, color, 1)
+
     def _sub_title(self, img: np.ndarray, x: int, cy: int, text: str) -> int:
         _put_text(img, text, (x + 12, cy + 12), 0.4, self.theme.text_dim, 1)
         return cy + 16
@@ -858,6 +885,13 @@ class Dashboard:
             _put_text(fitted, msg, ((box_w - w) // 2, box_h // 2), 0.6, theme.text_dim, 1)
         canvas[top + cam_title_h : top + cam_title_h + box_h,
                cam_x + 8 : cam_x + 8 + box_w] = fitted
+        # Subtítulo de lo que dice el robot, ceñido a la imagen de la cámara
+        # (no a su caja): en una feria ruidosa se lee aunque no se oiga.
+        img_x, img_y, img_w, img_h = _fitted_rect(
+            (camera_img if camera_img is not None else fitted).shape, box_w, box_h
+        )
+        self._subtitle(canvas, cam_x + 8 + img_x,
+                       top + cam_title_h + img_y + img_h, img_w, state)
 
         # Tablero.
         board_x = cam_x + cam_w + pad

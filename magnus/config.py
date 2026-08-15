@@ -94,3 +94,72 @@ DETECTION_FORGET_FRAMES_CORNERS: int = 0
 # Debe quedar muy por debajo de media casilla (16 mm) para no "meter" en el
 # tablero marcadores que están al lado.
 BOARD_EDGE_TOLERANCE_MM: float = 6.0
+
+
+# --------------------------------------------------------------------------- #
+# Voz y comentarios de la partida
+# --------------------------------------------------------------------------- #
+# Umbrales (en centipeones) para etiquetar la jugada del humano.  Se comparan
+# contra Δ = eval_después − eval_antes, medida SIEMPRE a favor del robot: si la
+# posición del robot mejora mucho tras la jugada del rival, el rival se equivocó.
+# Son generosos a propósito: es preferible callar que acusar de un error que no
+# lo fue delante del jurado.
+COMMENT_BLUNDER_CP: int = 300        # error grave
+COMMENT_MISTAKE_CP: int = 150        # error
+COMMENT_INACCURACY_CP: int = 50      # imprecisión
+COMMENT_GOOD_CP: int = 50            # buena jugada (Δ negativo de esta magnitud)
+COMMENT_GREAT_CP: int = 150          # muy buena jugada
+
+# A partir de esta ventaja se considera que alguien está ganando.
+COMMENT_ADVANTAGE_CP: int = 200
+# Jugadas mínimas entre dos comentarios de "quién va ganando" (no cansar).
+COMMENT_ADVANTAGE_EVERY_MOVES: int = 4
+
+# Voz de Piper: elegida de oído con examples/audition_voices.py.
+# El sufijo del nombre es el NIVEL DE CALIDAD del modelo y se nota: `x_low` y
+# `low` van a 16 kHz y suenan apagadas, `medium` sube a 22 kHz y `high` usa
+# además una red mayor.  Si cambias de voz, prueba primero las `-high`.
+# Los modelos NO están en el repo (pesan 60-110 MB): se descargan con
+#   python3 -m piper.download_voices es_ES-davefx-medium --data-dir voices/
+VOICE_PIPER_MODEL: str = "es_ES-davefx-medium"
+
+# Velocidad del habla: 1.0 = exactamente la cadencia natural del modelo.
+# NO se aplica ningún efecto de audio a la voz (ni filtros, ni tono, ni
+# resampleo): se busca que suene lo más humana y clara posible.  Bajarlo la
+# acelera y subirlo la ralentiza, pero alejarse de 1.0 le quita naturalidad.
+VOICE_LENGTH_SCALE: float = 1.0
+# Voz del comando `say` de macOS (respaldo cuando no hay modelo de Piper).
+# MAGNUS habla en masculino, así que por defecto se usa una voz masculina.
+# Habituales en español: Juan (es_MX), Jorge (es_ES), Diego (es_AR); femeninas:
+# Paulina (es_MX), Mónica (es_ES).  Si la configurada no está instalada, el
+# backend busca otra en español en vez de fallar — lista las tuyas con:
+#   say -v '?' | grep es_
+# En Ajustes > Accesibilidad > Contenido hablado se descargan las "mejoradas".
+VOICE_MACOS_VOICE: str = "Juan"
+VOICE_MACOS_RATE: int = 185          # palabras por minuto
+
+# Frases en cola como máximo; si se llena, se descartan las más viejas para no
+# quedarse hablando de jugadas que ya pasaron.  Ahora el robot habla bastante
+# (narra ambas jugadas y comenta), así que la cola aguanta un poco más.
+VOICE_QUEUE_MAX: int = 5
+
+# Narrar también las jugadas del rival ("Moviste el peón de e dos a e cuatro").
+# Hace al robot mucho más conversador, pero repetir en voz alta lo que el rival
+# acaba de hacer delante de él resulta redundante en una partida real, así que
+# viene desactivado.  Con esto en False el robot sigue reaccionando a las
+# capturas y a los jaques, que sí aportan.
+VOICE_ANNOUNCE_HUMAN_MOVES: bool = False
+
+# Avisar por voz de problemas en el tablero (pieza en la mano, jugada ilegal,
+# posición irreconocible).
+#
+# Desactivado por defecto: con poca luz la detección de algunas piezas parpadea
+# — se detectan, se pierden un par de segundos y vuelven —, y cada parpadeo se
+# interpretaba como una pieza retirada del tablero.  El robot acababa avisando
+# de faltas que no existían.  La lógica sigue disponible (`diagnose_placement`)
+# para reactivarla cuando la iluminación sea fiable.
+VOICE_WARN_BOARD_PROBLEMS: bool = False
+
+# Segundos sin que el rival mueva antes de recordárselo con amabilidad.
+# 0 desactiva el recordatorio.
+VOICE_IDLE_PROMPT_S: float = 30.0

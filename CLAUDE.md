@@ -176,6 +176,38 @@ Stockfish opcional para mostrar la jugada que el robot va a jugar, y modo
 `--synthetic` para correr sin cámara). **Pendiente:** probar con la cámara y el
 tablero físicos (los parámetros de detección pueden requerir ajuste con luz real).
 
+### ✅ `magnus/voice/` — IMPLEMENTADO (falta elegir la voz definitiva)
+
+El robot narra sus jugadas y comenta las del rival, en español.
+- `backend.py` — `SpeechBackend` (ABC) + `PiperBackend` (neuronal local,
+  **recomendado**: offline y portable a la Raspberry Pi) + `MacSayBackend`
+  (respaldo sin instalación en macOS) + `FakeSpeechBackend` (tests).
+  `default_backend()` elige el mejor disponible y, si no hay ninguno, devuelve
+  el falso: **la voz nunca puede tumbar una demostración**
+- `speech_text.py` — notación → texto pronunciable (`"g1"` → `"ge uno"`,
+  `"N"` → `"caballo"`). **Nunca pasar SAN ni casillas crudas al TTS**
+- `phrases.py` — frases con variantes (3-7 por situación) + `PhrasePicker` (no
+  repite la última). Hay tests que exigen un mínimo de variantes por grupo, que
+  no haya duplicados y que ninguna frase lleve notación cruda
+- `commentary.py` — Δ de centipeones → calidad de la jugada. Umbrales en
+  `config.py` (`COMMENT_*`). Además `diagnose_placement()` distingue jugada
+  ilegal / pieza en la mano / tablero irreconocible comparando el placement
+  esperado con el detectado (función pura, sin `python-chess`)
+- `voice_node.py` — `VoiceNode`: cola + hilo propio (hablar tarda ~1 s y la
+  visión corre a ~14 fps: **jamás hablar en el bucle principal**)
+
+⚠️ **El signo de los mates es delicado**: `mate_in > 0` = el lado que mueve DA
+mate; `mate_in == 0` = ya le hicieron mate (o sea, pierde). Con `>= 0` el robot
+cantaba "cometiste un error grave" justo cuando le daban mate a él. Hay test de
+regresión (`test_being_checkmated_is_not_an_advantage`).
+
+Para comentar se usa `ChessEngineNode.analyse_fen()` (fuerza fija,
+`ANALYSIS_CONFIG`), **no** la eval de la jugada de juego: así el robot puede
+jugar en fácil y aun así juzgar como un maestro.
+
+Pendiente: elegir la voz de oído con `examples/audition_voices.py` y ponerla en
+`config.VOICE_PIPER_MODEL`.
+
 ### 🔶 `magnus/arm/` — IMPLEMENTADO EN SOFTWARE; bloqueado por hardware
 
 Sigue el patrón de `magnus/engine/`:
@@ -348,6 +380,12 @@ magnus/
 │   ├── board_render.py     # tablero 2D con iconos + dashboard (visualización pura)
 │   └── vision_node.py      # BoardVisionNode + backends de cámara
 │   (arm_tracker.py — V2 futura, NO creada a propósito)
+├── voice/         # ✅ el robot narra y comenta la partida (falta elegir voz)
+│   ├── backend.py       # SpeechBackend ABC + Piper + macOS say + Fake
+│   ├── speech_text.py   # "g1" -> "ge uno"; MoveResponse -> narración
+│   ├── phrases.py       # frases con variantes (no repetir)
+│   ├── commentary.py    # Δ centipeones -> "error grave" / "buena jugada"
+│   └── voice_node.py    # VoiceNode: cola + hilo (no bloquea la visión)
 └── arm/           # 🔶 software listo; CyberPiBackend y positions.json bloqueados por hardware
     ├── __init__.py
     ├── backend.py           # ArmBackend ABC + FakeArmBackend + CyberPiBackend (stub)
@@ -355,7 +393,7 @@ magnus/
     └── arm_node.py          # MoveResponse → secuencia de sub-movimientos
     (positions.json — NO existe: se graba calibrando el brazo real)
 examples/          # demos ejecutables (engine, brazo, visión, pipeline completo)
-tests/             # 165+ tests; todos corren sin hardware
+tests/             # 240+ tests; todos corren sin hardware
 ```
 
 ---
@@ -371,6 +409,9 @@ tests/             # 165+ tests; todos corren sin hardware
 - ❌ No asumir que Stockfish está instalado en los tests unitarios (usar FakeBackend)
 - ❌ No inventar el protocolo de comunicación con CyberPi ni el mecanismo exacto del servo de garra — son decisiones pendientes de confirmar, no asunciones a hacer en silencio
 - ❌ No mezclar la lógica de detección de piezas, esquinas del tablero y marcador del brazo en una sola función — son tres responsabilidades distintas
+- ❌ No hablar (TTS) desde el bucle principal: sintetizar tarda ~1 s y congelaría la visión — todo va por la cola del `VoiceNode`
+- ❌ No pasar notación cruda (`"Cxf3"`, `"g1"`) al motor de voz — traducir antes con `speech_text.py`
+- ❌ No dejar que un fallo de audio interrumpa la partida: la voz es accesoria, se registra el error y se sigue en silencio
 
 ---
 
@@ -380,6 +421,13 @@ tests/             # 165+ tests; todos corren sin hardware
 chess>=1.10                    # python-chess
 opencv-contrib-python>=4.7     # cv2 + cv2.aruco
 numpy>=1.23
+piper-tts>=1.6                 # voz (OPCIONAL: sin esto juega en silencio)
+```
+
+Voz (una sola vez, con internet):
+```bash
+python3 -m piper.download_voices es_ES-davefx-medium --data-dir voices/
+python3 examples/audition_voices.py     # audiciona varias y elige
 ```
 
 Motor externo (binario):

@@ -9,13 +9,13 @@ posiciones falsa (valores 9999.x, claramente irreales).
 Ejemplos:
 
     # Una jugada desde la posición inicial y su secuencia de brazo
-    python examples/run_arm_demo.py
+    python3 examples/run_arm_demo.py
 
     # Una posición con captura al paso disponible
-    python examples/run_arm_demo.py --fen "rnbqkbnr/ppp1p1pp/8/3pPp2/8/8/PPPP1PPP/RNBQKBNR w KQkq f6 0 3"
+    python3 examples/run_arm_demo.py --fen "rnbqkbnr/ppp1p1pp/8/3pPp2/8/8/PPPP1PPP/RNBQKBNR w KQkq f6 0 3"
 
     # Auto-partida de 6 medias-jugadas mostrando la secuencia de cada una
-    python examples/run_arm_demo.py --selfplay 6
+    python3 examples/run_arm_demo.py --selfplay 6
 """
 
 from __future__ import annotations

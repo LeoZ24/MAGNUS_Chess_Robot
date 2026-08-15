@@ -25,8 +25,8 @@ from typing import Optional, Union
 import chess
 
 from ..core.messages import MoveResponse, PositionRequest
-from .backend import EngineBackend, UCIEngineBackend
-from .difficulty import DifficultyLevel, EngineConfig, get_config
+from .backend import EngineAnalysis, EngineBackend, UCIEngineBackend
+from .difficulty import ANALYSIS_CONFIG, DifficultyLevel, EngineConfig, get_config
 
 logger = logging.getLogger("magnus.engine.node")
 
@@ -157,6 +157,33 @@ class ChessEngineNode:
                 fen=fen, difficulty=difficulty, movetime=movetime, request_id=request_id
             )
         )
+
+    # ------------------------------------------------------------------ #
+    # Análisis (para comentar jugadas, no para jugarlas)
+    # ------------------------------------------------------------------ #
+    def analyse_fen(
+        self, fen: str, config: Optional[EngineConfig] = None
+    ) -> EngineAnalysis:
+        """Evalúa una posición a **fuerza fija**, sin elegir jugada para jugarla.
+
+        Pensado para juzgar la calidad de las jugadas (los comentarios de voz):
+        usa :data:`ANALYSIS_CONFIG` en vez de la dificultad de juego, así el
+        robot puede jugar en fácil y aun así comentar como un maestro.
+
+        El signo de ``evaluation_cp`` es desde el punto de vista del **lado que
+        mueve** en ``fen``; las posiciones ya terminadas se resuelven sin
+        molestar al motor.
+        """
+        if not self._started:
+            self.start()
+        board = self._parse_board(fen)
+
+        if board.is_checkmate():
+            return EngineAnalysis(evaluation_cp=None, mate_in=0, depth=0)
+        if board.is_game_over():                    # tablas de cualquier tipo
+            return EngineAnalysis(evaluation_cp=0, mate_in=None, depth=0)
+
+        return self._backend.analyse(board, config or ANALYSIS_CONFIG)
 
     # ------------------------------------------------------------------ #
     # Internos

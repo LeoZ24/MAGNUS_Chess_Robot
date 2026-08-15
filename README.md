@@ -14,12 +14,13 @@
 4. [Especificaciones físicas críticas](#especificaciones-físicas-críticas)
 5. [Estrategia de movimiento del brazo](#estrategia-de-movimiento-del-brazo)
 6. [Sistema de localización con ArUco](#sistema-de-localización-con-aruco)
-7. [Protocolo de mensajes entre módulos](#protocolo-de-mensajes-entre-módulos)
-8. [Estado actual y hoja de ruta](#estado-actual-y-hoja-de-ruta)
-9. [Instalación](#instalación)
-10. [Ejecución rápida](#ejecución-rápida)
-11. [Tests](#tests)
-12. [Convenciones del proyecto](#convenciones-del-proyecto)
+7. [Voz y comentarios](#voz-y-comentarios)
+8. [Protocolo de mensajes entre módulos](#protocolo-de-mensajes-entre-módulos)
+9. [Estado actual y hoja de ruta](#estado-actual-y-hoja-de-ruta)
+10. [Instalación](#instalación)
+11. [Ejecución rápida](#ejecución-rápida)
+12. [Tests](#tests)
+13. [Convenciones del proyecto](#convenciones-del-proyecto)
 
 ---
 
@@ -52,6 +53,7 @@ reemplazarse sin afectar a los demás.
 | **Engine**        | `magnus/engine/`      | ✅ Completo          | FEN → jugada con metadatos, via Stockfish UCI |
 | **Visión**        | `magnus/vision/`      | ✅ Software completo | Detección → homografía → FEN exacta (turno/enroque por inferencia); falta validar con cámara/tablero reales |
 | **Brazo robótico**| `magnus/arm/`         | 🔶 Software listo    | Secuencias pregrabadas implementadas y testeadas con backend falso; falta hardware (CyberPi + tabla de posiciones real) |
+| **Voz**           | `magnus/voice/`       | ✅ Software completo | El robot narra sus jugadas y comenta las del rival en español; falta elegir la voz definitiva de oído |
 
 ---
 
@@ -114,7 +116,7 @@ definidos formalmente en `magnus/config.py`:
 > | Alfil   | `2`     | `16`   | | Rey   | `9`     | `23`   |
 >
 > Los PNG imprimibles de los 17 marcadores (cada etiqueta indica cuántas copias
-> imprimir) se generan con `python examples/generate_aruco_markers.py`.
+> imprimir) se generan con `python3 examples/generate_aruco_markers.py`.
 
 ### Brazo robótico — articulado, 2 grados de libertad + garra
 
@@ -321,7 +323,7 @@ primera versión, y suficiente para una feria científica:
 > sub-posiciones por casilla. Las **unidades** (grados vs. pasos de encoder)
 > quedan abiertas: la tabla y el backend deben usar las mismas, el código no
 > las interpreta. La plantilla vacía se genera con
-> `python examples/generate_positions_template.py`.
+> `python3 examples/generate_positions_template.py`.
 
 Dos sub-posiciones por casilla, para evitar que el brazo golpee piezas vecinas
 al desplazarse:
@@ -423,6 +425,133 @@ juego.  Puntos importantes del montaje:
 
 ---
 
+## Voz y comentarios
+
+MAGNUS narra lo que hace y comenta cómo va la partida, en español:
+
+> «Muevo el caballo de ge uno a efe tres.»
+> «Capturo el peón en e cinco con el alfil desde ce cuatro. Jaque.»
+> «Uy. Eso fue un error grave.» · «Buena jugada. Sigue así.»
+
+### Cómo decide qué comentar
+
+Se compara la evaluación **antes y después** de la jugada del rival, igual que
+hacen Lichess o Chess.com:
+
+```
+Δ = eval_después − eval_antes        (siempre a favor del robot, en centipeones)
+
+Δ ≥ +300  error grave      Δ ≤  −50  buena jugada
+Δ ≥ +150  error            Δ ≤ −150  muy buena jugada
+Δ ≥  +50  imprecisión      |Δ| < 50  normal → se calla
+```
+
+Los umbrales están en `magnus/config.py` (`COMMENT_*`) y son generosos a
+propósito: es preferible callar que acusar de un error que no lo fue.
+
+El análisis usa `ChessEngineNode.analyse_fen()`, que va a **fuerza fija**
+(`ANALYSIS_CONFIG`, skill 20) y no a la dificultad de juego. Así el robot puede
+jugar en `BEGINNER` para que le ganes y aun así **comentar como un maestro**.
+
+### Motor de voz
+
+| Backend | Cuándo | Notas |
+|---|---|---|
+| `PiperBackend` | **Recomendado** | Neuronal, local, gratis. Sin internet y con el mismo código en Mac y Raspberry Pi |
+| `MacSayBackend` | Respaldo | El comando `say` de macOS, cero instalación |
+| `FakeSpeechBackend` | Tests y silencio | No suena; registra lo que se habría dicho |
+
+`default_backend()` elige el mejor disponible y, si no hay ninguno, devuelve el
+falso: **quedarse sin voz nunca interrumpe una partida**.
+
+> **En macOS el intérprete se llama `python3`, no `python`** (`python` a secas
+> da `zsh: command not found`). Y si tienes varias versiones instaladas, usa
+> siempre `python3.X -m pip install …` en vez de `pip install …`: así el paquete
+> acaba en el mismo intérprete con el que ejecutas el proyecto. Ese desajuste es
+> la causa número uno del `No module named 'piper'`.
+
+```bash
+# Comprueba con qué Python estás trabajando y que ahí está piper
+python3 -c "import sys, piper; print(sys.executable, 'piper OK')"
+
+# Voces del sistema (macOS): no hay que instalar nada
+python3 examples/audition_voices.py --engine say        # audiciona las masculinas
+python3 examples/audition_voices.py --engine say --all-spanish --list
+
+# Piper (para la Raspberry Pi). OJO: instálalo en el MISMO Python con el que
+# ejecutas el proyecto — tener varios Python es la causa nº 1 de
+# "No module named 'piper'":
+python3 -m pip install piper-tts          # OJO: python3 -m pip, no pip
+python3 -m piper.download_voices es_MX-claude-high --data-dir voices/
+python3 examples/audition_voices.py --engine piper --play
+```
+
+> **Los modelos de voz NO se suben a git.** Pesan entre 60 y 110 MB y GitHub
+> rechaza cualquier archivo de más de 100 MB (`GH001: Large files detected`).
+> La carpeta `voices/` está en `.gitignore`: cada quien descarga la voz que
+> necesita. Si por accidente ya los commiteaste, sácalos con
+> `git rm -r --cached voices` antes de volver a hacer push.
+>
+> **El sufijo del nombre es el nivel de calidad y se nota muchísimo.**
+> `x_low` y `low` van a 16 kHz y suenan apagadas, "como debajo del agua";
+> `medium` sube a 22 kHz; `high` es la única que suena natural. Usa siempre una
+> voz `-high`. MAGNUS **no aplica ningún efecto de audio** a la voz (ni
+> filtros, ni cambio de tono, ni resampleo): si suena rara, es el modelo.
+
+La voz elegida se pone en `magnus/config.py` → `VOICE_MACOS_VOICE` (para `say`)
+o `VOICE_PIPER_MODEL` (para Piper). También se puede probar sin editar nada:
+`python3 examples/run_vision_demo.py --say-voice Jorge`.
+
+MAGNUS habla en masculino, así que la voz por defecto de macOS es **Juan**
+(es_MX); si no está instalada, el backend busca otra voz masculina en español
+en vez de quedarse mudo.
+
+### Qué más dice
+
+Además de narrar y evaluar, el robot **puede** avisar cuando el tablero no
+cuadra, distinguiendo **qué** está pasando en vez de soltar un genérico "no
+entiendo". Viene **desactivado** (`VOICE_WARN_BOARD_PROBLEMS = False`): con
+poca luz la detección de algunas piezas parpadea, y cada parpadeo se
+interpretaba como una pieza retirada, así que el robot avisaba de faltas
+inexistentes. Poniéndolo en `True` se recupera este repertorio:
+
+| Situación detectada | Qué dice |
+|---|---|
+| Falta una pieza, no hay ninguna nueva | «¿Tienes una pieza en la mano? Colócala cuando decidas.» |
+| Una pieza cambió de casilla pero la jugada no es legal | «Esa jugada no es legal. Devuelve la pieza a su sitio.» |
+| Demasiadas diferencias (mano encima, piezas caídas) | «Algo no cuadra en el tablero. Revísalo, por favor.» |
+| El tablero vuelve a ser correcto | «Ahora sí. Seguimos.» |
+
+El aviso **no se repite** mientras el problema siga igual: durante una jugada
+larga saldría en bucle. La clasificación vive en `commentary.diagnose_placement()`
+y es una función pura sobre dos diccionarios de casillas, así que se testea sin
+cámara ni tablero.
+
+Puede narrar también las jugadas del rival (`VOICE_ANNOUNCE_HUMAN_MOVES`,
+desactivado por defecto: repetir en voz alta lo que el rival acaba de hacer
+delante de él resulta redundante). Con el flag en `False` el robot sigue
+reaccionando a las capturas y a los jaques, que sí aportan.
+
+En todo caso recuerda con amabilidad que le toca si tarda mucho
+(`VOICE_IDLE_PROMPT_S`), saluda, dice «te toca» tras mover y despide la
+partida. Cada situación tiene entre 3 y 7 formulaciones distintas y nunca
+repite la última usada.
+
+### Detalles que importan
+
+- **Nunca se le pasa notación cruda al TTS**: `"g1"` se convierte en `"ge uno"`
+  y `"N"` en `"caballo"` (`speech_text.py`). Un TTS leyendo "Cxf3" es
+  ininteligible.
+- **Se habla en un hilo aparte**: sintetizar tarda ~1 s y la visión corre a
+  ~14 fps; hablar en el bucle principal la congelaría.
+- **Subtítulos en el dashboard**: la última frase aparece sobre la imagen de la
+  cámara. En una feria ruidosa se lee aunque no se oiga. Tecla `M` para
+  silenciar el audio manteniendo los subtítulos.
+- **La voz es accesoria**: si el audio falla, se registra el error y la partida
+  continúa en silencio.
+
+---
+
 ## Protocolo de mensajes entre módulos
 
 Los módulos se comunican con objetos Python pasados directamente (mismo proceso)
@@ -454,7 +583,7 @@ resp_dict = response.to_dict()          # MoveResponse también tiene to_dict()
 - Zona de piezas capturadas y de intercambio (lógica; falta la física)
 - Integración de los tres nodos, demostrada sin hardware
   (`examples/run_full_pipeline_demo.py`)
-- Suite de tests completa (165+) con backends falsos — corre sin ningún hardware
+- Suite de tests completa (240+) con backends falsos — corre sin ningún hardware
 - CI en GitHub Actions (tests en cada push/PR)
 - Generador de marcadores ArUco imprimibles y de la plantilla de posiciones
 
@@ -511,15 +640,15 @@ numpy>=1.23
 
 ```bash
 # Jugada desde la posición inicial, dificultad media
-python examples/run_engine_node.py
+python3 examples/run_engine_node.py
 
 # Posición concreta + dificultad máxima, salida JSON
-python examples/run_engine_node.py \
+python3 examples/run_engine_node.py \
     --fen "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3" \
     --difficulty MAXIMUM --json
 
 # Engine contra sí mismo (6 medias-jugadas)
-python examples/run_engine_node.py --selfplay 6 --difficulty EASY
+python3 examples/run_engine_node.py --selfplay 6 --difficulty EASY
 ```
 
 ### Pipeline completo simulado (sin cámara, sin brazo, sin tablero)
@@ -529,8 +658,8 @@ marcadores ArUco reales, la visión la procesa y deduce la jugada del "humano",
 el engine responde y el brazo (falso) imprime su secuencia de comandos:
 
 ```bash
-python examples/run_full_pipeline_demo.py
-python examples/run_full_pipeline_demo.py --plies 8 --difficulty EASY -v
+python3 examples/run_full_pipeline_demo.py
+python3 examples/run_full_pipeline_demo.py --plies 8 --difficulty EASY -v
 ```
 
 ### Brazo solo (sin hardware)
@@ -539,8 +668,8 @@ El engine calcula jugadas y se muestra la secuencia exacta de comandos que
 recibiría el brazo real (backend falso + tabla de posiciones falsa):
 
 ```bash
-python examples/run_arm_demo.py                    # una jugada
-python examples/run_arm_demo.py --selfplay 6       # auto-partida con secuencias
+python3 examples/run_arm_demo.py                    # una jugada
+python3 examples/run_arm_demo.py --selfplay 6       # auto-partida con secuencias
 ```
 
 ### Visión en vivo (dashboard)
@@ -552,12 +681,12 @@ Stockfish), historial, capturas y FEN. Detecta todas las instancias de cada
 marcador a la vez (los peones comparten ID).
 
 ```bash
-python examples/run_vision_demo.py                 # webcam + Stockfish si está
-python examples/run_vision_demo.py --list-cameras  # ¿qué índice da imagen?
-python examples/run_vision_demo.py --camera 1      # cámara virtual (Iriun, OBS...)
-python examples/run_vision_demo.py --synthetic     # sin cámara: partida simulada
-python examples/run_vision_demo.py --no-engine     # sin Stockfish
-python examples/run_vision_demo.py --icons assets/pieces   # PNGs propios (wP.png...)
+python3 examples/run_vision_demo.py                 # webcam + Stockfish si está
+python3 examples/run_vision_demo.py --list-cameras  # ¿qué índice da imagen?
+python3 examples/run_vision_demo.py --camera 1      # cámara virtual (Iriun, OBS...)
+python3 examples/run_vision_demo.py --synthetic     # sin cámara: partida simulada
+python3 examples/run_vision_demo.py --no-engine     # sin Stockfish
+python3 examples/run_vision_demo.py --icons assets/pieces   # PNGs propios (wP.png...)
 # G inicia la partida (posición inicial; corrige la orientación sola),
 # O observa, F gira la vista, T gira 90° el mapeo de casillas,
 # R resetea la memoria de detección, Q sale
@@ -582,18 +711,30 @@ aun así no hay imagen:
    *antes* de arrancar el demo.
 3. **Ocupada por otro programa** (Zoom, Photo Booth, otra instancia del demo).
 4. **Índice equivocado**: con cámara integrada + Iriun, la buena no suele ser
-   la `0`. `python examples/run_vision_demo.py --list-cameras` lista las que
+   la `0`. `python3 examples/run_vision_demo.py --list-cameras` lista las que
    dan imagen de verdad.
+
+### Voz
+
+```bash
+# Descargar una voz (una vez, con internet) y audicionar varias
+python3 -m piper.download_voices es_ES-davefx-medium --data-dir voices/
+python3 examples/audition_voices.py --play
+
+# El demo habla solo; para silenciarlo:
+python3 examples/run_vision_demo.py --muted      # subtítulos sí, audio no
+python3 examples/run_vision_demo.py --no-voice   # ni voz ni subtítulos
+```
 
 ### Utilidades
 
 ```bash
 # PNGs de los 17 marcadores ArUco listos para imprimir (12 tipos de pieza,
 # con las copias a imprimir en la etiqueta + 4 esquinas + brazo)
-python examples/generate_aruco_markers.py
+python3 examples/generate_aruco_markers.py
 
 # Plantilla de positions.json para calibrar el brazo (valores en null)
-python examples/generate_positions_template.py
+python3 examples/generate_positions_template.py
 ```
 
 ---

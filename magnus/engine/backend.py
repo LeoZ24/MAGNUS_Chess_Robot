@@ -73,6 +73,21 @@ class EnginePlayResult:
     depth: Optional[int] = None
 
 
+@dataclass
+class EngineAnalysis:
+    """Evaluación de una posición, **sin** ejecutar ninguna jugada.
+
+    Se usa para *juzgar* jugadas (los comentarios de voz), no para jugar.  El
+    signo de ``evaluation_cp`` sigue el mismo criterio que en
+    :class:`EnginePlayResult`: positivo = ventaja para el lado que mueve.
+    """
+
+    evaluation_cp: Optional[int] = None   # centipeones desde el lado a mover
+    mate_in: Optional[int] = None
+    depth: Optional[int] = None
+    best_move: Optional[chess.Move] = None
+
+
 class EngineBackend(ABC):
     """Interfaz que debe implementar cualquier motor para MAGNUS."""
 
@@ -83,6 +98,22 @@ class EngineBackend(ABC):
     @abstractmethod
     def select_move(self, board: chess.Board, config: EngineConfig) -> EnginePlayResult:
         """Elige la mejor jugada para ``board`` según ``config``."""
+
+    def analyse(self, board: chess.Board, config: EngineConfig) -> EngineAnalysis:
+        """Evalúa una posición sin comprometerse a jugar.
+
+        Implementación por defecto en términos de :meth:`select_move`, para que
+        cualquier backend existente (incluidos los falsos de los tests) siga
+        funcionando sin cambios.  Los motores que sepan analizar de verdad
+        deberían sobreescribirla — ver :meth:`UCIEngineBackend.analyse`.
+        """
+        result = self.select_move(board, config)
+        return EngineAnalysis(
+            evaluation_cp=result.evaluation_cp,
+            mate_in=result.mate_in,
+            depth=result.depth,
+            best_move=result.move,
+        )
 
     @abstractmethod
     def quit(self) -> None:
@@ -180,6 +211,27 @@ class UCIEngineBackend(EngineBackend):
             evaluation_cp=evaluation_cp,
             mate_in=mate_in,
             depth=depth,
+        )
+
+    def analyse(self, board: chess.Board, config: EngineConfig) -> EngineAnalysis:
+        """Evalúa la posición con ``engine.analyse`` (no consume una jugada)."""
+        engine = self._ensure_started()
+        self._apply_options(engine, config)
+        info = engine.analyse(board, self._build_limit(config))
+
+        evaluation_cp: Optional[int] = None
+        mate_in: Optional[int] = None
+        score = info.get("score")
+        if score is not None:
+            pov = score.pov(board.turn)
+            evaluation_cp = pov.score()
+            mate_in = pov.mate()
+        pv = info.get("pv") or []
+        return EngineAnalysis(
+            evaluation_cp=evaluation_cp,
+            mate_in=mate_in,
+            depth=info.get("depth"),
+            best_move=pv[0] if pv else None,
         )
 
     def quit(self) -> None:

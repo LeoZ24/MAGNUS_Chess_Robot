@@ -18,8 +18,8 @@ detección) y una etiqueta de texto debajo.
 
 Uso:
 
-    python examples/generate_aruco_markers.py
-    python examples/generate_aruco_markers.py --output markers/ --size 600
+    python3 examples/generate_aruco_markers.py
+    python3 examples/generate_aruco_markers.py --output markers/ --size 600
 """
 
 from __future__ import annotations

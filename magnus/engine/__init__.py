@@ -3,14 +3,26 @@
 Expone el nodo del engine, los niveles de dificultad y el backend de motor.
 """
 
-from .backend import EngineBackend, EnginePlayResult, UCIEngineBackend, find_engine_binary
+from .backend import (
+    EngineAnalysis,
+    EngineBackend,
+    EnginePlayResult,
+    UCIEngineBackend,
+    find_engine_binary,
+)
 from .chess_engine_node import (
     ChessEngineNode,
     EngineNodeError,
     GameOverError,
     InvalidPositionError,
 )
-from .difficulty import DIFFICULTY_PRESETS, DifficultyLevel, EngineConfig, get_config
+from .difficulty import (
+    ANALYSIS_CONFIG,
+    DIFFICULTY_PRESETS,
+    DifficultyLevel,
+    EngineConfig,
+    get_config,
+)
 
 __all__ = [
     "ChessEngineNode",
@@ -24,5 +36,7 @@ __all__ = [
     "EngineBackend",
     "UCIEngineBackend",
     "EnginePlayResult",
+    "EngineAnalysis",
+    "ANALYSIS_CONFIG",
     "find_engine_binary",
 ]

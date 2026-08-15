@@ -111,3 +111,13 @@ DIFFICULTY_PRESETS: dict[DifficultyLevel, EngineConfig] = {
 def get_config(level: Union[str, int, DifficultyLevel]) -> EngineConfig:
     """Devuelve el ``EngineConfig`` para un nivel de dificultad dado."""
     return DIFFICULTY_PRESETS[DifficultyLevel.parse(level)]
+
+
+# Configuración de ANÁLISIS: no se usa para jugar, sino para **juzgar** jugadas
+# (los comentarios de voz).  Va siempre a fuerza máxima y a tiempo corto, para
+# que la calidad del comentario NO dependa de la dificultad a la que juega el
+# robot: puede jugar en BEGINNER para que le ganes y aun así comentar bien.
+ANALYSIS_CONFIG = EngineConfig(
+    name="ANALYSIS", skill_level=20, limit_strength=False, elo=None,
+    movetime=0.25, depth=12,
+)
