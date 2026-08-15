@@ -488,11 +488,16 @@ def test_model_quality_from_name(name, quality):
     assert model_quality(name) == quality
 
 
-def test_default_piper_voice_is_high_quality():
-    """Los modelos `medium`/`low` suenan apagados, "como debajo del agua"."""
+def test_configured_piper_voice_has_a_known_quality_tier():
+    """El nombre de la voz debe llevar sufijo de calidad reconocible.
+
+    No se exige `high`: cuál suena mejor es una decisión de oído del usuario
+    (ver examples/audition_voices.py).  Lo que sí se comprueba es que el nombre
+    esté bien formado, para cazar una errata en config.py.
+    """
     from magnus.voice.backend import model_quality
 
-    assert model_quality(config.VOICE_PIPER_MODEL) == "high"
+    assert model_quality(config.VOICE_PIPER_MODEL) in {"x_low", "low", "medium", "high"}
 
 
 def test_default_speed_is_the_models_natural_one():
