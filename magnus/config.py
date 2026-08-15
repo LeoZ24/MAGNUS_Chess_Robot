@@ -119,7 +119,7 @@ COMMENT_ADVANTAGE_EVERY_MOVES: int = 4
 # nota muchísimo: `x_low` y `low` van a 16 kHz y suenan apagadas ("como debajo
 # del agua"), `medium` sube a 22 kHz y `high` es la única que suena natural.
 # Usa siempre una voz `-high` si existe para el acento que quieras.
-VOICE_PIPER_MODEL: str = "es_MX-claude-high"
+VOICE_PIPER_MODEL: str = "es_ES-davefx-medium"
 
 # Velocidad del habla: 1.0 = exactamente la cadencia natural del modelo.
 # NO se aplica ningún efecto de audio a la voz (ni filtros, ni tono, ni

@@ -8,3 +8,7 @@ venv/
 
 # macOS
 .DS_Store
+voices/
+*.onnx
+*.onnx.json
+*.wav
