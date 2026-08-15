@@ -9,24 +9,17 @@ el nodo de visión mediante ``FakeCameraBackend``.
 from __future__ import annotations
 
 import logging
+from typing import Iterable, Mapping, Optional
 
 import cv2
 import cv2.aruco as aruco
 import numpy as np
 
 from .. import config
-from .board_pose import BoardPose
-from .piece_map import ARUCO_TO_PIECE
+from .board_pose import CORNER_MM_BY_NAME, EXPECTED_LAYOUT, BoardPose
+from .piece_map import PIECE_TO_ARUCO
 
 logger = logging.getLogger("magnus.vision.synthetic")
-
-# Coordenada mm de cada esquina (misma convención que board_pose).
-_CORNER_MM: dict[int, tuple[float, float]] = {
-    config.ARUCO_IDS_BOARD_CORNERS[0]: (0.0, 0.0),
-    config.ARUCO_IDS_BOARD_CORNERS[1]: (config.BOARD_SIZE_MM, 0.0),
-    config.ARUCO_IDS_BOARD_CORNERS[2]: (config.BOARD_SIZE_MM, config.BOARD_SIZE_MM),
-    config.ARUCO_IDS_BOARD_CORNERS[3]: (0.0, config.BOARD_SIZE_MM),
-}
 
 
 class SyntheticBoardError(Exception):
@@ -34,22 +27,19 @@ class SyntheticBoardError(Exception):
 
 
 def _ids_for_placement(placement: dict[str, str]) -> dict[str, int]:
-    """Asigna un ID ArUco concreto a cada casilla según su símbolo de pieza.
+    """Asigna a cada casilla el ID ArUco de su TIPO de pieza.
 
-    Hay varios IDs por tipo (p. ej. 8 peones blancos: IDs 8-15); se reparten en
-    orden.  Falla si el placement pide más piezas de un tipo de las que existen.
+    El marcador identifica el tipo (todos los peones blancos son el ID 0), así
+    que varias casillas pueden compartir ID — exactamente como en el tablero
+    físico.  Falla solo si el símbolo no es una pieza FEN válida.
     """
-    pool: dict[str, list[int]] = {}
-    for aruco_id, sym in sorted(ARUCO_TO_PIECE.items()):
-        pool.setdefault(sym, []).append(aruco_id)
-
     assignment: dict[str, int] = {}
     for square, sym in sorted(placement.items()):
-        if not pool.get(sym):
+        if sym not in PIECE_TO_ARUCO:
             raise SyntheticBoardError(
-                f"No quedan IDs libres para la pieza {sym!r} (casilla {square})."
+                f"Símbolo de pieza inválido en {square}: {sym!r}."
             )
-        assignment[square] = pool[sym].pop(0)
+        assignment[square] = PIECE_TO_ARUCO[sym]
     return assignment
 
 
@@ -73,6 +63,9 @@ def render_board_image(
     margin_mm: float = 30.0,
     piece_marker_mm: float = 14.0,
     corner_marker_mm: float = 16.0,
+    corner_layout: Optional[Mapping[int, str]] = None,
+    hidden_corners: Iterable[int] = (),
+    extra_markers: Iterable[tuple[int, tuple[float, float]]] = (),
 ) -> np.ndarray:
     """Renderiza una vista cenital sintética del tablero (imagen BGR).
 
@@ -82,6 +75,15 @@ def render_board_image(
         margin_mm: margen blanco alrededor del tablero (zona de silencio ArUco).
         piece_marker_mm: lado del marcador de cada pieza.
         corner_marker_mm: lado de los marcadores de esquina.
+        corner_layout: dónde se pega *físicamente* cada marcador de esquina
+            (``{40: "a8", ...}``).  Por defecto, la colocación correcta; sirve
+            para simular marcadores mal colocados o intercambiados.
+        hidden_corners: IDs de esquina que NO se dibujan — simula un marcador
+            tapado por una pieza (p. ej. una torre sobre la esquina).
+        extra_markers: marcadores sueltos ``(id, (x_mm, y_mm))`` en coordenadas
+            del tablero; con coordenadas negativas o mayores que el tablero
+            quedan FUERA del área de juego (marcador olvidado en la mesa, pieza
+            capturada en la zona de descarte).
     """
     dictionary = aruco.getPredefinedDictionary(getattr(aruco, config.ARUCO_DICT_NAME))
     size_px = int(round((config.BOARD_SIZE_MM + 2 * margin_mm) * px_per_mm))
@@ -101,13 +103,22 @@ def render_board_image(
 
     # Esquinas del tablero.
     corner_side = int(round(corner_marker_mm * px_per_mm))
-    for aruco_id, (x_mm, y_mm) in _CORNER_MM.items():
+    layout = corner_layout if corner_layout is not None else EXPECTED_LAYOUT
+    hidden = set(hidden_corners)
+    for aruco_id, corner_name in layout.items():
+        if aruco_id in hidden:
+            continue
+        x_mm, y_mm = CORNER_MM_BY_NAME[corner_name]
         _paste_marker(canvas, dictionary, aruco_id, to_px(x_mm, y_mm), corner_side)
 
     # Piezas.
     piece_side = int(round(piece_marker_mm * px_per_mm))
     for square, aruco_id in _ids_for_placement(placement).items():
         x_mm, y_mm = BoardPose.square_center_mm(square)
+        _paste_marker(canvas, dictionary, aruco_id, to_px(x_mm, y_mm), piece_side)
+
+    # Marcadores sueltos (pueden caer fuera del área de juego).
+    for aruco_id, (x_mm, y_mm) in extra_markers:
         _paste_marker(canvas, dictionary, aruco_id, to_px(x_mm, y_mm), piece_side)
 
     logger.debug(

@@ -46,8 +46,14 @@ ZONE_EXCHANGE: str = "exchange"         # zona de intercambio para promociones
 # --------------------------------------------------------------------------- #
 ARUCO_DICT_NAME: str = "DICT_4X4_50"
 
-# Piezas de ajedrez: IDs 0-31 (mapeo oficial en magnus/vision/piece_map.py).
-ARUCO_IDS_PIECES: range = range(0, 32)
+# Piezas de ajedrez: el marcador identifica el TIPO de pieza (tipo + color),
+# no la pieza individual — todos los peones blancos llevan el mismo ID, etc.
+# Estos son los 12 IDs físicamente impresos (mapeo oficial ID -> símbolo FEN
+# en magnus/vision/piece_map.py):
+#
+#   blancas: 0=peón  1=caballo  2=alfil  6=torre  8=dama  9=rey
+#   negras: 12=peón 15=caballo 16=alfil 18=torre 21=dama 23=rey
+ARUCO_IDS_PIECES: frozenset[int] = frozenset({0, 1, 2, 6, 8, 9, 12, 15, 16, 18, 21, 23})
 
 # Esquinas del tablero, para la homografía tablero↔cámara.  El orden define a
 # qué esquina física corresponde cada ID (ver magnus/vision/board_pose.py):
@@ -60,3 +66,31 @@ ARUCO_ID_ARM: int = 44
 
 # Detecciones consecutivas necesarias para confirmar un marcador (enclavamiento).
 DETECTION_CONFIRM_N: int = 5
+
+# Como varios marcadores comparten ID (todos los peones blancos son el ID 0),
+# el enclavamiento rastrea cada instancia POR POSICIÓN: una detección se asocia
+# a una pista existente del mismo ID si está a menos de
+# `lado_del_marcador × DETECTION_MATCH_RADIUS_FACTOR` píxeles.  Con marcadores
+# de ~14 mm y casillas de 32 mm, 1.5 mantiene separadas dos piezas iguales en
+# casillas adyacentes y a la vez tolera el jitter de la cámara.
+DETECTION_MATCH_RADIUS_FACTOR: float = 1.5
+
+# Un marcador confirmado que deja de verse este número de frames consecutivos
+# se olvida (la pieza se movió o se retiró).  0 = no olvidar nunca.
+DETECTION_FORGET_FRAMES: int = 20
+
+# Las esquinas son ESTÁTICAS: ni la cámara ni el tablero se mueven durante la
+# partida, así que una esquina confirmada se recuerda en su última posición
+# aunque una torre la tape (0 = no olvidar nunca).  Si de verdad se mueve la
+# cámara o el tablero hay que llamar a DetectionLatch.reset() / BoardVisionNode
+# .reset_board_pose() (tecla R en el demo de visión).
+DETECTION_FORGET_FRAMES_CORNERS: int = 0
+
+# Tolerancia al borde del tablero (mm).  Un marcador de pieza cuyo centro cae
+# fuera del área de juego pero a menos de esta distancia se asigna a la casilla
+# del borde: absorbe el error de la homografía y de las esquinas mal centradas.
+# Más allá, la pieza está FUERA del tablero y se ignora — es lo normal para las
+# piezas capturadas en la zona de descarte o para marcadores sueltos en la mesa.
+# Debe quedar muy por debajo de media casilla (16 mm) para no "meter" en el
+# tablero marcadores que están al lado.
+BOARD_EDGE_TOLERANCE_MM: float = 6.0

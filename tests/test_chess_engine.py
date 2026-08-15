@@ -6,13 +6,11 @@ al paso, promoción) sin depender de Stockfish.  Hay además un test de
 integración que usa el motor real y se omite si no está instalado.
 """
 
-import os
-import sys
-
 import chess
 import pytest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# La raíz del repo la añade tests/conftest.py (válido para TODOS los módulos
+# de test, sin depender del orden de colección).
 
 from magnus.core.messages import PositionRequest, STARTING_FEN
 from magnus.engine import (

@@ -3,7 +3,7 @@
 Hay **tres roles** de marcadores en MAGNUS, cada uno con su rango de ID (ver
 ``magnus/config.py``) y su propósito:
 
-    * PIECE  (0-31): piezas de ajedrez -> construir la FEN
+    * PIECE  (0-23, 12 IDs): tipos de pieza de ajedrez -> construir la FEN
     * CORNER (40-43): esquinas del tablero -> homografía tablero↔cámara
     * ARM    (44): extremo del brazo -> corrección de posición (V2, futuro)
 
@@ -11,14 +11,21 @@ Este módulo NO mezcla la lógica de los tres: solo detecta, clasifica y aplica
 el "enclavamiento" (un marcador debe verse N frames consecutivos antes de
 considerarse confirmado, para evitar falsos positivos — heredado del prototipo
 ``ArUco_Test.py``).
+
+**Importante — varios marcadores comparten ID:** el marcador identifica el
+*tipo* de pieza (todos los peones blancos llevan el ID 0), así que un mismo ID
+puede aparecer hasta 8 veces en un frame.  Por eso el enclavamiento no indexa
+por ID: mantiene una *pista* (track) por instancia física y asocia cada
+detección nueva a la pista más cercana del mismo ID (asociación espacial).
 """
 
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
+from typing import Mapping, Optional
 
 import cv2
 import cv2.aruco as aruco
@@ -51,7 +58,12 @@ def classify_role(aruco_id: int) -> MarkerRole:
 
 @dataclass
 class Detection:
-    """Un marcador detectado en un frame."""
+    """Un marcador detectado en un frame.
+
+    Como los IDs de pieza identifican el *tipo* y no la pieza individual, dos
+    ``Detection`` distintas pueden compartir ``aruco_id`` — se diferencian por
+    ``center_px``.
+    """
 
     aruco_id: int
     center_px: tuple[float, float]
@@ -61,6 +73,13 @@ class Detection:
     def __post_init__(self) -> None:
         if self.role is MarkerRole.UNKNOWN:
             self.role = classify_role(self.aruco_id)
+
+    @property
+    def marker_side_px(self) -> float:
+        """Lado medio del marcador en píxeles (escala local de la imagen)."""
+        pts = self.corners_px
+        sides = [float(np.linalg.norm(pts[i] - pts[(i + 1) % 4])) for i in range(4)]
+        return sum(sides) / 4.0
 
 
 class ArucoDetector:
@@ -80,7 +99,11 @@ class ArucoDetector:
         self._detector = aruco.ArucoDetector(dictionary, params)
 
     def detect(self, frame: np.ndarray) -> list[Detection]:
-        """Detecta todos los marcadores en un frame BGR o en escala de grises."""
+        """Detecta todos los marcadores en un frame BGR o en escala de grises.
+
+        Devuelve TODAS las instancias, incluidas varias con el mismo ID (p. ej.
+        los 8 peones blancos comparten el ID 0).
+        """
         if frame.ndim == 3:
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         else:
@@ -93,7 +116,7 @@ class ArucoDetector:
             return detections
         # ids puede venir como Nx1 (OpenCV 4) o N (OpenCV 5); aplanar unifica.
         for marker_corners, marker_id in zip(corners_list, np.asarray(ids).flatten()):
-            pts = marker_corners.reshape(4, 2)
+            pts = np.asarray(marker_corners, dtype=np.float64).reshape(4, 2)
             center = (float(pts[:, 0].mean()), float(pts[:, 1].mean()))
             detections.append(
                 Detection(aruco_id=int(marker_id), center_px=center, corners_px=pts)
@@ -102,66 +125,207 @@ class ArucoDetector:
 
 
 @dataclass
-class _LatchEntry:
-    count: int = 0
-    detection: Optional[Detection] = None
+class _Track:
+    """Una instancia física de marcador rastreada a lo largo de los frames."""
+
+    detection: Detection
+    hits: int = 1           # frames consecutivos vista
+    missed: int = 0         # frames consecutivos sin verse (solo confirmadas)
+    confirmed: bool = False
 
 
-@dataclass
 class DetectionLatch:
-    """Enclavamiento: confirma un marcador tras N frames consecutivos.
+    """Enclavamiento multi-instancia: confirma marcadores tras N frames seguidos.
 
-    Una vez confirmado, el marcador queda "fijo" en memoria (se sigue
-    actualizando su posición si se re-detecta, pero no se pierde si la cámara
-    lo deja de ver un instante).  Usar :meth:`reset` si se mueve la cámara.
+    A diferencia de un dict indexado por ID, este enclavamiento mantiene una
+    *pista* por instancia física, de modo que los 8 peones blancos (todos con
+    el ID 0) se rastrean por separado.  La asociación entre frames es espacial:
+    una detección continúa la pista del mismo ID más cercana, siempre que esté
+    a menos de ``lado_del_marcador × match_radius_factor`` píxeles (umbral
+    auto-escalado: no depende de la resolución ni de la distancia de la cámara).
+
+    Comportamiento:
+
+    * Una pista *pendiente* que deja de verse un frame pierde su racha
+      (detección estricta de N frames consecutivos, como el prototipo).
+    * Una pista *confirmada* sobrevive ausencias breves (oclusión de la mano),
+      pero se olvida tras ``forget_after`` frames sin verse — así una pieza
+      movida o capturada no deja un "fantasma".  ``forget_after=0`` desactiva
+      el olvido (útil en escaneos cortos de un solo uso).
+    * **Las esquinas son la excepción**: no se olvidan nunca (ver
+      ``config.DETECTION_FORGET_FRAMES_CORNERS``).  El tablero y la cámara no
+      se mueven durante la partida, así que una esquina tapada por una torre se
+      queda memorizada en su última posición y la homografía sigue viva.
+    * Los IDs de esquina son únicos (a diferencia de los de pieza): mientras
+      haya una pista de esquina confirmada, otra detección del mismo ID lejos
+      de ella se ignora — un marcador de esquina suelto en la mesa o un reflejo
+      no puede robarle el sitio al bueno.
+    * :meth:`reset` borra toda la memoria (cámara o tablero movidos).
     """
 
-    confirm_n: int = config.DETECTION_CONFIRM_N
-    _pending: dict[int, _LatchEntry] = field(default_factory=dict)
-    _confirmed: dict[int, Detection] = field(default_factory=dict)
+    #: Roles cuyos IDs identifican una instancia única (no hay dos esquinas 40).
+    UNIQUE_ID_ROLES: frozenset[MarkerRole] = frozenset({MarkerRole.CORNER})
 
-    def update(self, detections: list[Detection]) -> dict[int, Detection]:
+    def __init__(
+        self,
+        confirm_n: int = config.DETECTION_CONFIRM_N,
+        forget_after: int = config.DETECTION_FORGET_FRAMES,
+        match_radius_factor: float = config.DETECTION_MATCH_RADIUS_FACTOR,
+        forget_after_by_role: Optional[Mapping[MarkerRole, int]] = None,
+    ):
+        self.confirm_n = confirm_n
+        self.forget_after = forget_after
+        self.match_radius_factor = match_radius_factor
+        # Política de olvido por rol; lo no listado usa `forget_after`.
+        self.forget_after_by_role: dict[MarkerRole, int] = (
+            dict(forget_after_by_role)
+            if forget_after_by_role is not None
+            else {MarkerRole.CORNER: config.DETECTION_FORGET_FRAMES_CORNERS}
+        )
+        self._tracks: list[_Track] = []
+
+    # ------------------------------------------------------------------ #
+    # Actualización por frame
+    # ------------------------------------------------------------------ #
+    def update(self, detections: list[Detection]) -> list[Detection]:
         """Procesa las detecciones de un frame y devuelve las confirmadas."""
-        seen_ids = set()
+        matched: set[int] = set()       # índices de pistas continuadas este frame
+        new_tracks: list[_Track] = []
+
         for det in detections:
-            seen_ids.add(det.aruco_id)
-            if det.aruco_id in self._confirmed:
-                # Ya fijo: micro-ajuste de posición.
-                self._confirmed[det.aruco_id] = det
+            idx = self._match(det, exclude=matched)
+            if idx is None:
+                if self._is_duplicate_unique(det):
+                    logger.debug(
+                        "Detección extra del marcador único %d en (%.0f, %.0f) "
+                        "ignorada: ya hay una pista confirmada en otra posición.",
+                        det.aruco_id, det.center_px[0], det.center_px[1],
+                    )
+                    continue
+                track = _Track(detection=det)
+                track.confirmed = track.hits >= self.confirm_n
+                new_tracks.append(track)
                 continue
-            entry = self._pending.setdefault(det.aruco_id, _LatchEntry())
-            entry.count += 1
-            entry.detection = det
-            if entry.count >= self.confirm_n:
-                self._confirmed[det.aruco_id] = det
-                del self._pending[det.aruco_id]
-                logger.debug("Marcador %d confirmado (%s).", det.aruco_id, det.role.value)
+            track = self._tracks[idx]
+            track.detection = det       # micro-ajuste de posición
+            track.hits += 1
+            track.missed = 0
+            matched.add(idx)
+            if not track.confirmed and track.hits >= self.confirm_n:
+                track.confirmed = True
+                logger.debug(
+                    "Marcador %d confirmado en (%.0f, %.0f) [%s].",
+                    det.aruco_id, det.center_px[0], det.center_px[1], det.role.value,
+                )
 
-        # Un marcador pendiente que deja de verse pierde su racha.
-        for aruco_id in list(self._pending):
-            if aruco_id not in seen_ids:
-                del self._pending[aruco_id]
+        # Pistas no vistas este frame: las pendientes pierden la racha; las
+        # confirmadas aguantan hasta forget_after frames (las esquinas, siempre).
+        survivors: list[_Track] = []
+        for idx, track in enumerate(self._tracks):
+            if idx in matched:
+                survivors.append(track)
+                continue
+            if not track.confirmed:
+                continue                # racha rota: se descarta
+            track.missed += 1
+            forget_after = self.forget_for(track.detection.role)
+            if forget_after and track.missed >= forget_after:
+                det = track.detection
+                logger.debug(
+                    "Marcador %d olvidado tras %d frames sin verse (%.0f, %.0f).",
+                    det.aruco_id, track.missed, det.center_px[0], det.center_px[1],
+                )
+                continue
+            survivors.append(track)
 
-        return dict(self._confirmed)
+        self._tracks = survivors + new_tracks
+        return self.confirmed
+
+    def forget_for(self, role: MarkerRole) -> int:
+        """Frames sin ver tras los que se olvida un marcador de ese rol (0 = nunca)."""
+        return self.forget_after_by_role.get(role, self.forget_after)
+
+    def _is_duplicate_unique(self, det: Detection) -> bool:
+        """``True`` si es un ID único (esquina) que ya tiene pista confirmada."""
+        if det.role not in self.UNIQUE_ID_ROLES:
+            return False
+        return any(
+            t.confirmed and t.detection.aruco_id == det.aruco_id for t in self._tracks
+        )
+
+    def _match(self, det: Detection, exclude: set[int]) -> Optional[int]:
+        """Índice de la pista más cercana compatible con la detección, o None."""
+        radius = det.marker_side_px * self.match_radius_factor
+        best_idx: Optional[int] = None
+        best_dist = math.inf
+        for idx, track in enumerate(self._tracks):
+            if idx in exclude or track.detection.aruco_id != det.aruco_id:
+                continue
+            prev = track.detection.center_px
+            dist = math.hypot(det.center_px[0] - prev[0], det.center_px[1] - prev[1])
+            if dist <= radius and dist < best_dist:
+                best_idx, best_dist = idx, dist
+        return best_idx
+
+    # ------------------------------------------------------------------ #
+    # Estado
+    # ------------------------------------------------------------------ #
+    @property
+    def confirmed(self) -> list[Detection]:
+        """Detecciones confirmadas (todas las instancias, IDs repetidos incluidos)."""
+        return [t.detection for t in self._tracks if t.confirmed]
 
     @property
-    def confirmed(self) -> dict[int, Detection]:
-        return dict(self._confirmed)
+    def pending(self) -> list[Detection]:
+        """Detecciones aún en racha de confirmación (no confirmadas)."""
+        return [t.detection for t in self._tracks if not t.confirmed]
 
-    def forget(self, aruco_id: int) -> None:
-        """Olvida un marcador confirmado (p. ej. una pieza capturada)."""
-        self._confirmed.pop(aruco_id, None)
+    @property
+    def occluded(self) -> list[Detection]:
+        """Confirmadas que NO se ven ahora mismo: se recuerdan de frames previos.
+
+        Sirve para avisar en la interfaz de que, p. ej., una esquina está tapada
+        y se está usando su última posición conocida.
+        """
+        return [t.detection for t in self._tracks if t.confirmed and t.missed > 0]
+
+    def stats(self) -> dict[MarkerRole, int]:
+        """Número de instancias confirmadas por rol (para interfaces/demos)."""
+        counts: dict[MarkerRole, int] = {role: 0 for role in MarkerRole}
+        for det in self.confirmed:
+            counts[det.role] += 1
+        return counts
 
     def reset(self) -> None:
         """Borra toda la memoria (usar si la cámara o el tablero se movieron)."""
-        self._pending.clear()
-        self._confirmed.clear()
+        self._tracks.clear()
         logger.info("DetectionLatch reseteado.")
 
 
-def split_by_role(detections: dict[int, Detection]) -> dict[MarkerRole, dict[int, Detection]]:
-    """Separa un dict de detecciones confirmadas por rol."""
-    out: dict[MarkerRole, dict[int, Detection]] = {role: {} for role in MarkerRole}
-    for aruco_id, det in detections.items():
-        out[det.role][aruco_id] = det
+def split_by_role(detections: list[Detection]) -> dict[MarkerRole, list[Detection]]:
+    """Separa una lista de detecciones por rol (sin mezclar sus lógicas)."""
+    out: dict[MarkerRole, list[Detection]] = {role: [] for role in MarkerRole}
+    for det in detections:
+        out[det.role].append(det)
+    return out
+
+
+def corners_by_id(detections: list[Detection]) -> dict[int, Detection]:
+    """Indexa detecciones de ESQUINA por ID (las esquinas sí tienen ID único).
+
+    Si un ID de esquina aparece repetido (reflejo, marcador duplicado), se
+    conserva la primera instancia y se avisa por log.
+    """
+    out: dict[int, Detection] = {}
+    for det in detections:
+        if det.role is not MarkerRole.CORNER:
+            continue
+        if det.aruco_id in out:
+            logger.warning(
+                "Esquina %d detectada más de una vez; se ignora la instancia extra "
+                "en (%.0f, %.0f).",
+                det.aruco_id, det.center_px[0], det.center_px[1],
+            )
+            continue
+        out[det.aruco_id] = det
     return out

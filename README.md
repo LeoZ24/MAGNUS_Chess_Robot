@@ -97,16 +97,24 @@ reemplazarse sin afectar a los demás.
 Hay **tres roles distintos** de marcadores ArUco con rangos de ID separados,
 definidos formalmente en `magnus/config.py`:
 
-| Rol                      | Cantidad | Rango de ID | Estado |
+| Rol                      | Cantidad | IDs | Estado |
 |---------------------------|----------|---------------|--------|
-| Piezas de ajedrez         | 32       | `0–31`        | ✅ mapeo oficial en `magnus/vision/piece_map.py` |
+| Piezas de ajedrez         | 12 tipos (32 piezas físicas) | `0–23` (con huecos) | ✅ mapeo oficial en `magnus/vision/piece_map.py` |
 | Esquinas del tablero      | 4        | `40–43`       | ✅ 40=a8, 41=h8, 42=h1, 43=a1 |
 | Marcador del brazo        | 1        | `44`          | ✅ reservado (rastreo V2) |
 
-> **Mapeo ID→pieza oficial:** IDs 0–15 = piezas blancas, 16–31 = negras; dentro
-> de cada color el orden es K, Q, R, R, B, B, N, N y 8 peones. Los PNG
-> imprimibles de los 37 marcadores se generan con
-> `python examples/generate_aruco_markers.py`.
+> **Mapeo ID→pieza oficial:** el marcador identifica el **tipo** de pieza
+> (tipo + color), no la pieza individual — todos los peones blancos llevan el
+> mismo marcador. La detección rastrea las instancias repetidas por posición.
+>
+> | Pieza   | Blancas | Negras | | Pieza | Blancas | Negras |
+> |---------|---------|--------|-|-------|---------|--------|
+> | Peón    | `0`     | `12`   | | Torre | `6`     | `18`   |
+> | Caballo | `1`     | `15`   | | Dama  | `8`     | `21`   |
+> | Alfil   | `2`     | `16`   | | Rey   | `9`     | `23`   |
+>
+> Los PNG imprimibles de los 17 marcadores (cada etiqueta indica cuántas copias
+> imprimir) se generan con `python examples/generate_aruco_markers.py`.
 
 ### Brazo robótico — articulado, 2 grados de libertad + garra
 
@@ -187,18 +195,26 @@ funciona sin cambiar el resto del sistema.
 
 Tablero físico → placement → FEN exacta. Componentes:
 
-- `aruco_detector.py` — detección con "enclavamiento" (un marcador debe verse N
-  frames consecutivos antes de confirmarse; evita falsos positivos), con los
-  tres roles de marcadores separados
+- `aruco_detector.py` — detección con "enclavamiento" **multi-instancia**: un
+  marcador debe verse N frames consecutivos antes de confirmarse, y como los
+  IDs identifican el *tipo* de pieza (los 8 peones blancos comparten ID), cada
+  instancia física se rastrea por posición; los tres roles de marcadores van
+  separados.  Las esquinas, al ser estáticas y de ID único, **se recuerdan en
+  su última posición** aunque una pieza las tape
 - `board_pose.py` — homografía tablero(mm)↔imagen(px) con las 4 esquinas; mapea
-  el centro de cada pieza a su casilla
-- `piece_map.py` — mapeo oficial ID ArUco → símbolo FEN
+  el centro de cada pieza a su casilla.  Deduce de la geometría qué esquina
+  ocupa cada marcador (tolera marcadores cruzados y cualquier orientación de
+  cámara) y descarta lo que esté fuera del área de juego
+- `piece_map.py` — mapeo oficial ID ArUco → símbolo FEN (por tipo de pieza)
 - `fen_builder.py` — placement → texto FEN (módulo puro)
 - `game_state.py` — `GameTracker`: deduce la jugada del humano comparando el
   placement detectado contra las jugadas legales de la partida → turno,
   enroque y al paso exactos, sin hardware extra
 - `calibration.py` — calibración de cámara (opcional en v1)
 - `synthetic.py` — genera imágenes sintéticas del tablero (tests/demos sin cámara)
+- `board_render.py` — representación 2D profesional del tablero (iconos de
+  pieza, última jugada, flecha de la jugada planificada, jaque) + dashboard
+  completo para el demo en vivo
 - `vision_node.py` — `BoardVisionNode` con backend de cámara intercambiable
   (`OpenCVCameraBackend` real / `FakeCameraBackend` para tests)
 
@@ -269,10 +285,13 @@ ARM_MAGNET_GRADE     = "N52"   # fuerte: puede influir en piezas adyacentes
 
 # ArUco — rangos de ID por rol (oficiales)
 ARUCO_DICT           = "DICT_4X4_50"
-ARUCO_IDS_PIECES      = range(0, 32)   # piezas de ajedrez
+ARUCO_IDS_PIECES      = frozenset({0, 1, 2, 6, 8, 9, 12, 15, 16, 18, 21, 23})
+                                       # 12 tipos de pieza (las copias comparten ID)
 ARUCO_IDS_BOARD_CORNERS = (40, 41, 42, 43)  # esquinas del tablero
 ARUCO_ID_ARM          = 44             # marcador en el extremo del brazo
 DETECTION_CONFIRM_N   = 5              # detecciones consecutivas para confirmar presencia
+DETECTION_MATCH_RADIUS_FACTOR = 1.5    # asociación espacial de IDs repetidos
+DETECTION_FORGET_FRAMES = 20           # olvidar una pieza confirmada que ya no se ve
 ```
 
 ---
@@ -372,6 +391,36 @@ tablero en coordenadas de imagen y viceversa — esto es lo que hace posible,
 a futuro, comparar "dónde debería estar el brazo" contra "dónde está
 realmente" usando la cámara.
 
+### Cómo colocar los 4 marcadores de esquina
+
+Los IDs **recorren el borde del tablero**, no van en orden de lectura:
+
+```
+    40 (a8) ─────────── 41 (h8)          ✅ 40 → 41 → 42 → 43 recorre el
+      │                    │                borde (sentido horario visto
+    43 (a1) ─────────── 42 (h1)             desde arriba con blancas abajo)
+
+    40 ─────── 41                        ❌ zig-zag: 42 y 43 cruzados
+      │  ╳     │
+    42 ─────── 43
+```
+
+El centro de cada marcador debe coincidir con la esquina exterior del área de
+juego.  Puntos importantes del montaje:
+
+- **La orientación de la cámara da igual**: cada esquina se identifica por su
+  ID, así que la cámara puede estar apaisada, vertical, del lado de las blancas
+  o de las negras, y el tablero girado cualquier ángulo dentro de la imagen.
+- Si dos marcadores contiguos se colocan cruzados, la visión lo **detecta y lo
+  corrige sola** (avisa en el dashboard) — antes esto producía una homografía
+  degenerada en la que todas las piezas caían "fuera del tablero".
+- Si el tablero digital sale girado 90/180°, se corrige con la tecla `T` del
+  demo, o iniciando la partida con `G` desde la posición inicial (deduce la
+  orientación probando los cuatro giros).
+- Una esquina tapada por una pieza **no** rompe nada: la última posición
+  conocida se recuerda mientras la cámara y el tablero no se muevan (tecla `R`
+  para olvidarla si se mueven).
+
 ---
 
 ## Protocolo de mensajes entre módulos
@@ -405,7 +454,7 @@ resp_dict = response.to_dict()          # MoveResponse también tiene to_dict()
 - Zona de piezas capturadas y de intercambio (lógica; falta la física)
 - Integración de los tres nodos, demostrada sin hardware
   (`examples/run_full_pipeline_demo.py`)
-- Suite de tests completa (76+) con backends falsos — corre sin ningún hardware
+- Suite de tests completa (165+) con backends falsos — corre sin ningún hardware
 - CI en GitHub Actions (tests en cada push/PR)
 - Generador de marcadores ArUco imprimibles y de la plantilla de posiciones
 
@@ -494,20 +543,53 @@ python examples/run_arm_demo.py                    # una jugada
 python examples/run_arm_demo.py --selfplay 6       # auto-partida con secuencias
 ```
 
-### Visión en vivo (con webcam)
+### Visión en vivo (dashboard)
 
-Sucesor del prototipo `ArUco_Test.py`: muestra los marcadores por rol, la
-casilla de cada pieza y la FEN en tiempo real. Requiere los marcadores impresos.
+Sucesor del prototipo `ArUco_Test.py`: una sola ventana con la cámara (marcadores
+por rol + cuadrícula proyectada), la **representación 2D del tablero** con iconos
+de pieza, la última jugada, la **jugada que el robot va a jugar** (flecha, con
+Stockfish), historial, capturas y FEN. Detecta todas las instancias de cada
+marcador a la vez (los peones comparten ID).
 
 ```bash
-python examples/run_vision_demo.py
-# 'R' resetea la memoria de detección, 'Q' sale
+python examples/run_vision_demo.py                 # webcam + Stockfish si está
+python examples/run_vision_demo.py --list-cameras  # ¿qué índice da imagen?
+python examples/run_vision_demo.py --camera 1      # cámara virtual (Iriun, OBS...)
+python examples/run_vision_demo.py --synthetic     # sin cámara: partida simulada
+python examples/run_vision_demo.py --no-engine     # sin Stockfish
+python examples/run_vision_demo.py --icons assets/pieces   # PNGs propios (wP.png...)
+# G inicia la partida (posición inicial; corrige la orientación sola),
+# O observa, F gira la vista, T gira 90° el mapeo de casillas,
+# R resetea la memoria de detección, Q sale
 ```
+
+La cámara puede estar en cualquier orientación. El dashboard avisa si los
+marcadores de esquina están cruzados (los corrige solo), marca con `MEM` las
+esquinas tapadas que se están recordando y cuenta con `FUERA n` los marcadores
+detectados fuera del tablero.
+
+#### La cámara no da imagen (`No se pudo leer un frame de la cámara`)
+
+Abrir el dispositivo **no** garantiza que esté transmitiendo, sobre todo con
+cámaras virtuales (Iriun, EpocCam, OBS): el backend espera unos segundos al
+primer frame (`--camera-warmup`) y tolera frames sueltos perdidos por wifi. Si
+aun así no hay imagen:
+
+1. **Permisos**: macOS → Ajustes → Privacidad y seguridad → Cámara, activa la
+   app desde la que ejecutas (Terminal, VS Code…) y **reiníciala**. Este es el
+   motivo de que "reiniciando VS Code a veces se arreglaba".
+2. **Cámara virtual**: el móvil tiene que estar conectado y transmitiendo
+   *antes* de arrancar el demo.
+3. **Ocupada por otro programa** (Zoom, Photo Booth, otra instancia del demo).
+4. **Índice equivocado**: con cámara integrada + Iriun, la buena no suele ser
+   la `0`. `python examples/run_vision_demo.py --list-cameras` lista las que
+   dan imagen de verdad.
 
 ### Utilidades
 
 ```bash
-# PNGs de los 37 marcadores ArUco listos para imprimir (piezas/esquinas/brazo)
+# PNGs de los 17 marcadores ArUco listos para imprimir (12 tipos de pieza,
+# con las copias a imprimir en la etiqueta + 4 esquinas + brazo)
 python examples/generate_aruco_markers.py
 
 # Plantilla de positions.json para calibrar el brazo (valores en null)
@@ -561,13 +643,14 @@ magnus/
 ├── config.py                # ✅ constantes físicas + rangos de ID ArUco
 ├── vision/                  # ✅ implementado
 │   ├── __init__.py
-│   ├── aruco_detector.py    # detección + enclavamiento (3 roles separados)
+│   ├── aruco_detector.py    # detección + enclavamiento multi-instancia (3 roles)
 │   ├── calibration.py       # corrección de distorsión de cámara
 │   ├── board_pose.py        # homografía a partir de las 4 esquinas ArUco
 │   ├── piece_map.py         # mapeo oficial ID ArUco → símbolo FEN
 │   ├── fen_builder.py       # placement → texto FEN
 │   ├── game_state.py        # GameTracker (inferencia de jugadas)
 │   ├── synthetic.py         # imágenes sintéticas para tests/demos
+│   ├── board_render.py      # tablero 2D con iconos + dashboard del demo
 │   └── vision_node.py       # BoardVisionNode + backends de cámara
 └── arm/                     # 🔶 software listo; falta hardware
     ├── __init__.py
