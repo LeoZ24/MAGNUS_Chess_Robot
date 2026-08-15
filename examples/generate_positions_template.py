@@ -10,8 +10,8 @@ Cuando esté rellena, renombrarla a ``magnus/arm/positions.json``.
 
 Uso:
 
-    python examples/generate_positions_template.py
-    python examples/generate_positions_template.py --output mi_tabla.json
+    python3 examples/generate_positions_template.py
+    python3 examples/generate_positions_template.py --output mi_tabla.json
 """
 
 from __future__ import annotations

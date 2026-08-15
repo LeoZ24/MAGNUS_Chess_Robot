@@ -15,9 +15,9 @@ de audio.
 
 Descargar una voz de Piper (una vez, con internet)::
 
-    python -m piper.download_voices es_ES-davefx-medium --data-dir voices/
+    python3 -m piper.download_voices es_MX-claude-high --data-dir voices/
 
-Y luego ``PiperBackend(model="voices/es_ES-davefx-medium.onnx")``.
+Y luego ``PiperBackend(model="voices/es_MX-claude-high.onnx")``.
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ import logging
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import wave
 from abc import ABC, abstractmethod
@@ -288,8 +289,8 @@ def find_piper_model(
         if alternatives:
             logger.warning(
                 "La voz %r no está descargada; se usa %s. Para descargar la "
-                "configurada: python -m piper.download_voices %s --data-dir %s",
-                name, alternatives[0].name, name, directory,
+                "configurada: %s -m piper.download_voices %s --data-dir %s",
+                name, alternatives[0].name, sys.executable, name, directory,
             )
             return alternatives[0]
     return None
@@ -344,15 +345,16 @@ class PiperBackend(SpeechBackend):
             return self._voice
         if self.model_path is None:
             raise SpeechError(
-                "No se encontró ningún modelo de voz de Piper. Descarga uno con: "
-                f"python -m piper.download_voices {config.VOICE_PIPER_MODEL} "
-                "--data-dir voices/"
+                "No se encontró ningún modelo de voz de Piper. Descarga uno con:\n"
+                f"  {sys.executable} -m piper.download_voices "
+                f"{config.VOICE_PIPER_MODEL} --data-dir voices/"
             )
         try:
             from piper import PiperVoice
         except ImportError as exc:
             raise SpeechError(
-                "Falta el paquete de Piper. Instálalo con: pip install piper-tts"
+                "Falta el paquete de Piper en ESTE Python. Instálalo con:\n"
+                f"  {sys.executable} -m pip install piper-tts"
             ) from exc
         logger.info("Cargando voz de Piper: %s", self.model_path)
         self._voice = PiperVoice.load(str(self.model_path))
@@ -424,8 +426,9 @@ def default_backend(
             logger.info("Voz: usando %s.", type(backend).__name__)
             return backend
     logger.warning(
-        "Ningún motor de voz disponible; MAGNUS jugará en silencio. "
-        "Para tener voz: pip install piper-tts && "
-        f"python -m piper.download_voices {config.VOICE_PIPER_MODEL} --data-dir voices/"
+        "Ningún motor de voz disponible; MAGNUS jugará en silencio. Para tener "
+        "voz:\n  %s -m pip install piper-tts\n"
+        "  %s -m piper.download_voices %s --data-dir voices/",
+        sys.executable, sys.executable, config.VOICE_PIPER_MODEL,
     )
     return FakeSpeechBackend()

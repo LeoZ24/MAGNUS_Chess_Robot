@@ -16,8 +16,8 @@ Stockfish mismo con --human-random).
 
 Uso:
 
-    python examples/run_full_pipeline_demo.py
-    python examples/run_full_pipeline_demo.py --plies 8 --difficulty EASY -v
+    python3 examples/run_full_pipeline_demo.py
+    python3 examples/run_full_pipeline_demo.py --plies 8 --difficulty EASY -v
 """
 
 from __future__ import annotations

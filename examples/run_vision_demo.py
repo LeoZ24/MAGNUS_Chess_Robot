@@ -35,14 +35,14 @@ Teclas:
     Q  salir
 
 Uso:
-    python examples/run_vision_demo.py                     # webcam 0
-    python examples/run_vision_demo.py --camera 1
-    python examples/run_vision_demo.py --list-cameras      # ¿qué índice da imagen?
-    python examples/run_vision_demo.py --synthetic         # sin cámara (simulado)
-    python examples/run_vision_demo.py --no-engine
-    python examples/run_vision_demo.py --icons assets/pieces
-    python examples/run_vision_demo.py --say-voice Jorge   # otra voz de macOS
-    python examples/run_vision_demo.py --synthetic --screenshot demo.png
+    python3 examples/run_vision_demo.py                     # webcam 0
+    python3 examples/run_vision_demo.py --camera 1
+    python3 examples/run_vision_demo.py --list-cameras      # ¿qué índice da imagen?
+    python3 examples/run_vision_demo.py --synthetic         # sin cámara (simulado)
+    python3 examples/run_vision_demo.py --no-engine
+    python3 examples/run_vision_demo.py --icons assets/pieces
+    python3 examples/run_vision_demo.py --say-voice Jorge   # otra voz de macOS
+    python3 examples/run_vision_demo.py --synthetic --screenshot demo.png
 
 Iconos personalizados: pon PNGs llamados wP.png, wN.png, wB.png, wR.png,
 wQ.png, wK.png, bP.png, ... bK.png (con canal alfa) en una carpeta y pásala

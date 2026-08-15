@@ -116,7 +116,7 @@ definidos formalmente en `magnus/config.py`:
 > | Alfil   | `2`     | `16`   | | Rey   | `9`     | `23`   |
 >
 > Los PNG imprimibles de los 17 marcadores (cada etiqueta indica cuántas copias
-> imprimir) se generan con `python examples/generate_aruco_markers.py`.
+> imprimir) se generan con `python3 examples/generate_aruco_markers.py`.
 
 ### Brazo robótico — articulado, 2 grados de libertad + garra
 
@@ -323,7 +323,7 @@ primera versión, y suficiente para una feria científica:
 > sub-posiciones por casilla. Las **unidades** (grados vs. pasos de encoder)
 > quedan abiertas: la tabla y el backend deben usar las mismas, el código no
 > las interpreta. La plantilla vacía se genera con
-> `python examples/generate_positions_template.py`.
+> `python3 examples/generate_positions_template.py`.
 
 Dos sub-posiciones por casilla, para evitar que el brazo golpee piezas vecinas
 al desplazarse:
@@ -464,17 +464,26 @@ jugar en `BEGINNER` para que le ganes y aun así **comentar como un maestro**.
 `default_backend()` elige el mejor disponible y, si no hay ninguno, devuelve el
 falso: **quedarse sin voz nunca interrumpe una partida**.
 
+> **En macOS el intérprete se llama `python3`, no `python`** (`python` a secas
+> da `zsh: command not found`). Y si tienes varias versiones instaladas, usa
+> siempre `python3.X -m pip install …` en vez de `pip install …`: así el paquete
+> acaba en el mismo intérprete con el que ejecutas el proyecto. Ese desajuste es
+> la causa número uno del `No module named 'piper'`.
+
 ```bash
+# Comprueba con qué Python estás trabajando y que ahí está piper
+python3 -c "import sys, piper; print(sys.executable, 'piper OK')"
+
 # Voces del sistema (macOS): no hay que instalar nada
-python examples/audition_voices.py --engine say        # audiciona las masculinas
-python examples/audition_voices.py --engine say --all-spanish --list
+python3 examples/audition_voices.py --engine say        # audiciona las masculinas
+python3 examples/audition_voices.py --engine say --all-spanish --list
 
 # Piper (para la Raspberry Pi). OJO: instálalo en el MISMO Python con el que
 # ejecutas el proyecto — tener varios Python es la causa nº 1 de
 # "No module named 'piper'":
-python3 -m pip install piper-tts
+python3 -m pip install piper-tts          # OJO: python3 -m pip, no pip
 python3 -m piper.download_voices es_MX-claude-high --data-dir voices/
-python examples/audition_voices.py --engine piper --play
+python3 examples/audition_voices.py --engine piper --play
 ```
 
 > **El sufijo del nombre es el nivel de calidad y se nota muchísimo.**
@@ -485,7 +494,7 @@ python examples/audition_voices.py --engine piper --play
 
 La voz elegida se pone en `magnus/config.py` → `VOICE_MACOS_VOICE` (para `say`)
 o `VOICE_PIPER_MODEL` (para Piper). También se puede probar sin editar nada:
-`python examples/run_vision_demo.py --say-voice Jorge`.
+`python3 examples/run_vision_demo.py --say-voice Jorge`.
 
 MAGNUS habla en masculino, así que la voz por defecto de macOS es **Juan**
 (es_MX); si no está instalada, el backend busca otra voz masculina en español
@@ -594,15 +603,15 @@ numpy>=1.23
 
 ```bash
 # Jugada desde la posición inicial, dificultad media
-python examples/run_engine_node.py
+python3 examples/run_engine_node.py
 
 # Posición concreta + dificultad máxima, salida JSON
-python examples/run_engine_node.py \
+python3 examples/run_engine_node.py \
     --fen "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3" \
     --difficulty MAXIMUM --json
 
 # Engine contra sí mismo (6 medias-jugadas)
-python examples/run_engine_node.py --selfplay 6 --difficulty EASY
+python3 examples/run_engine_node.py --selfplay 6 --difficulty EASY
 ```
 
 ### Pipeline completo simulado (sin cámara, sin brazo, sin tablero)
@@ -612,8 +621,8 @@ marcadores ArUco reales, la visión la procesa y deduce la jugada del "humano",
 el engine responde y el brazo (falso) imprime su secuencia de comandos:
 
 ```bash
-python examples/run_full_pipeline_demo.py
-python examples/run_full_pipeline_demo.py --plies 8 --difficulty EASY -v
+python3 examples/run_full_pipeline_demo.py
+python3 examples/run_full_pipeline_demo.py --plies 8 --difficulty EASY -v
 ```
 
 ### Brazo solo (sin hardware)
@@ -622,8 +631,8 @@ El engine calcula jugadas y se muestra la secuencia exacta de comandos que
 recibiría el brazo real (backend falso + tabla de posiciones falsa):
 
 ```bash
-python examples/run_arm_demo.py                    # una jugada
-python examples/run_arm_demo.py --selfplay 6       # auto-partida con secuencias
+python3 examples/run_arm_demo.py                    # una jugada
+python3 examples/run_arm_demo.py --selfplay 6       # auto-partida con secuencias
 ```
 
 ### Visión en vivo (dashboard)
@@ -635,12 +644,12 @@ Stockfish), historial, capturas y FEN. Detecta todas las instancias de cada
 marcador a la vez (los peones comparten ID).
 
 ```bash
-python examples/run_vision_demo.py                 # webcam + Stockfish si está
-python examples/run_vision_demo.py --list-cameras  # ¿qué índice da imagen?
-python examples/run_vision_demo.py --camera 1      # cámara virtual (Iriun, OBS...)
-python examples/run_vision_demo.py --synthetic     # sin cámara: partida simulada
-python examples/run_vision_demo.py --no-engine     # sin Stockfish
-python examples/run_vision_demo.py --icons assets/pieces   # PNGs propios (wP.png...)
+python3 examples/run_vision_demo.py                 # webcam + Stockfish si está
+python3 examples/run_vision_demo.py --list-cameras  # ¿qué índice da imagen?
+python3 examples/run_vision_demo.py --camera 1      # cámara virtual (Iriun, OBS...)
+python3 examples/run_vision_demo.py --synthetic     # sin cámara: partida simulada
+python3 examples/run_vision_demo.py --no-engine     # sin Stockfish
+python3 examples/run_vision_demo.py --icons assets/pieces   # PNGs propios (wP.png...)
 # G inicia la partida (posición inicial; corrige la orientación sola),
 # O observa, F gira la vista, T gira 90° el mapeo de casillas,
 # R resetea la memoria de detección, Q sale
@@ -665,19 +674,19 @@ aun así no hay imagen:
    *antes* de arrancar el demo.
 3. **Ocupada por otro programa** (Zoom, Photo Booth, otra instancia del demo).
 4. **Índice equivocado**: con cámara integrada + Iriun, la buena no suele ser
-   la `0`. `python examples/run_vision_demo.py --list-cameras` lista las que
+   la `0`. `python3 examples/run_vision_demo.py --list-cameras` lista las que
    dan imagen de verdad.
 
 ### Voz
 
 ```bash
 # Descargar una voz (una vez, con internet) y audicionar varias
-python -m piper.download_voices es_ES-davefx-medium --data-dir voices/
-python examples/audition_voices.py --play
+python3 -m piper.download_voices es_ES-davefx-medium --data-dir voices/
+python3 examples/audition_voices.py --play
 
 # El demo habla solo; para silenciarlo:
-python examples/run_vision_demo.py --muted      # subtítulos sí, audio no
-python examples/run_vision_demo.py --no-voice   # ni voz ni subtítulos
+python3 examples/run_vision_demo.py --muted      # subtítulos sí, audio no
+python3 examples/run_vision_demo.py --no-voice   # ni voz ni subtítulos
 ```
 
 ### Utilidades
@@ -685,10 +694,10 @@ python examples/run_vision_demo.py --no-voice   # ni voz ni subtítulos
 ```bash
 # PNGs de los 17 marcadores ArUco listos para imprimir (12 tipos de pieza,
 # con las copias a imprimir en la etiqueta + 4 esquinas + brazo)
-python examples/generate_aruco_markers.py
+python3 examples/generate_aruco_markers.py
 
 # Plantilla de positions.json para calibrar el brazo (valores en null)
-python examples/generate_positions_template.py
+python3 examples/generate_positions_template.py
 ```
 
 ---

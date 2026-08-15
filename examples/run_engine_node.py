@@ -8,14 +8,14 @@ la FEN por la línea de comandos, será el nodo de visión quien la envíe.
 Ejemplos:
 
     # Jugada desde la posición inicial, dificultad media
-    python examples/run_engine_node.py
+    python3 examples/run_engine_node.py
 
     # Posición concreta + dificultad máxima, salida JSON
-    python examples/run_engine_node.py --fen "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3" \
+    python3 examples/run_engine_node.py --fen "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3" \
         --difficulty MAXIMUM --json
 
     # Mini-partida del engine contra sí mismo
-    python examples/run_engine_node.py --selfplay 6 --difficulty EASY
+    python3 examples/run_engine_node.py --selfplay 6 --difficulty EASY
 """
 
 from __future__ import annotations

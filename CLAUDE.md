@@ -422,8 +422,8 @@ piper-tts>=1.6                 # voz (OPCIONAL: sin esto juega en silencio)
 
 Voz (una sola vez, con internet):
 ```bash
-python -m piper.download_voices es_ES-davefx-medium --data-dir voices/
-python examples/audition_voices.py     # audiciona varias y elige
+python3 -m piper.download_voices es_ES-davefx-medium --data-dir voices/
+python3 examples/audition_voices.py     # audiciona varias y elige
 ```
 
 Motor externo (binario):

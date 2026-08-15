@@ -14,11 +14,11 @@ Dos motores:
 
 Uso::
 
-    python examples/audition_voices.py                 # el motor disponible
-    python examples/audition_voices.py --engine say    # solo voces de macOS
-    python examples/audition_voices.py --engine say --all-spanish
-    python examples/audition_voices.py --engine piper --play
-    python examples/audition_voices.py --list          # solo listar, sin hablar
+    python3 examples/audition_voices.py                 # el motor disponible
+    python3 examples/audition_voices.py --engine say    # solo voces de macOS
+    python3 examples/audition_voices.py --engine say --all-spanish
+    python3 examples/audition_voices.py --engine piper --play
+    python3 examples/audition_voices.py --list          # solo listar, sin hablar
 
 Cuando elijas, ponla en ``magnus/config.py``:
 
@@ -88,7 +88,7 @@ def explain_missing_piper() -> None:
     print("   instaló en uno y el script corre con otro. Instálalo en ESTE:")
     print(f"\n      {sys.executable} -m pip install piper-tts\n")
     print("   Mientras tanto puedes audicionar las voces del sistema:")
-    print("      python examples/audition_voices.py --engine say\n")
+    print("      python3 examples/audition_voices.py --engine say\n")
 
 
 # --------------------------------------------------------------------------- #
