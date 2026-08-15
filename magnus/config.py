@@ -144,8 +144,21 @@ VOICE_MACOS_RATE: int = 185          # palabras por minuto
 VOICE_QUEUE_MAX: int = 5
 
 # Narrar también las jugadas del rival ("Moviste el peón de e dos a e cuatro").
-# Hace al robot mucho más conversador y ayuda al público a seguir la partida.
-VOICE_ANNOUNCE_HUMAN_MOVES: bool = True
+# Hace al robot mucho más conversador, pero repetir en voz alta lo que el rival
+# acaba de hacer delante de él resulta redundante en una partida real, así que
+# viene desactivado.  Con esto en False el robot sigue reaccionando a las
+# capturas y a los jaques, que sí aportan.
+VOICE_ANNOUNCE_HUMAN_MOVES: bool = False
+
+# Avisar por voz de problemas en el tablero (pieza en la mano, jugada ilegal,
+# posición irreconocible).
+#
+# Desactivado por defecto: con poca luz la detección de algunas piezas parpadea
+# — se detectan, se pierden un par de segundos y vuelven —, y cada parpadeo se
+# interpretaba como una pieza retirada del tablero.  El robot acababa avisando
+# de faltas que no existían.  La lógica sigue disponible (`diagnose_placement`)
+# para reactivarla cuando la iluminación sea fiable.
+VOICE_WARN_BOARD_PROBLEMS: bool = False
 
 # Segundos sin que el rival mueva antes de recordárselo con amabilidad.
 # 0 desactiva el recordatorio.

@@ -725,4 +725,19 @@ def test_phrases_are_speakable_not_notation():
 def test_voice_settings_exist():
     assert config.VOICE_QUEUE_MAX >= 1
     assert isinstance(config.VOICE_ANNOUNCE_HUMAN_MOVES, bool)
+    assert isinstance(config.VOICE_WARN_BOARD_PROBLEMS, bool)
     assert config.VOICE_IDLE_PROMPT_S >= 0
+
+
+def test_the_robot_does_not_repeat_the_humans_move_out_loud():
+    """Narrar la jugada del rival delante de él es redundante: viene apagado."""
+    assert config.VOICE_ANNOUNCE_HUMAN_MOVES is False
+
+
+def test_board_warnings_are_off_because_detection_flickers():
+    """Con poca luz las piezas parpadean y el aviso salta en falso.
+
+    La lógica sigue existiendo y testeada (ver los tests de
+    ``diagnose_placement``); lo que está apagado es que el robot la cante.
+    """
+    assert config.VOICE_WARN_BOARD_PROBLEMS is False

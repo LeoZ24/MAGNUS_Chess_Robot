@@ -659,7 +659,8 @@ def main() -> int:
                         message = None
                         last_activity = time.monotonic()
                         if voice is not None and session.last_mover == "human":
-                            voice.confirm_board_fixed()
+                            if config.VOICE_WARN_BOARD_PROBLEMS:
+                                voice.confirm_board_fixed()
                             detail = session.last_move_detail
                             if config.VOICE_ANNOUNCE_HUMAN_MOVES and detail:
                                 # La narración ya menciona captura y jaque, así
@@ -685,7 +686,7 @@ def main() -> int:
                 if placement and placement == session.last_rejected \
                         and stable >= STABLE_FRAMES * 4:
                     message = "posicion no corresponde a ninguna jugada legal"
-                    if voice is not None:
+                    if voice is not None and config.VOICE_WARN_BOARD_PROBLEMS:
                         # Distingue jugada ilegal de pieza en la mano o tablero
                         # revuelto, y no repite el aviso mientras no cambie.
                         voice.warn_board_problem(session.tracker.placement(), placement)

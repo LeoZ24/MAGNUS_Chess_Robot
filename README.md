@@ -508,8 +508,12 @@ en vez de quedarse mudo.
 
 ### Qué más dice
 
-Además de narrar y evaluar, el robot avisa cuando el tablero no cuadra, y
-distingue **qué** está pasando en vez de soltar un genérico "no entiendo":
+Además de narrar y evaluar, el robot **puede** avisar cuando el tablero no
+cuadra, distinguiendo **qué** está pasando en vez de soltar un genérico "no
+entiendo". Viene **desactivado** (`VOICE_WARN_BOARD_PROBLEMS = False`): con
+poca luz la detección de algunas piezas parpadea, y cada parpadeo se
+interpretaba como una pieza retirada, así que el robot avisaba de faltas
+inexistentes. Poniéndolo en `True` se recupera este repertorio:
 
 | Situación detectada | Qué dice |
 |---|---|
@@ -523,10 +527,15 @@ larga saldría en bucle. La clasificación vive en `commentary.diagnose_placemen
 y es una función pura sobre dos diccionarios de casillas, así que se testea sin
 cámara ni tablero.
 
-También narra las jugadas del rival (`VOICE_ANNOUNCE_HUMAN_MOVES`), recuerda con
-amabilidad que le toca si tarda mucho (`VOICE_IDLE_PROMPT_S`), saluda, dice «te
-toca» tras mover y despide la partida. Cada situación tiene entre 3 y 7
-formulaciones distintas y nunca repite la última usada.
+Puede narrar también las jugadas del rival (`VOICE_ANNOUNCE_HUMAN_MOVES`,
+desactivado por defecto: repetir en voz alta lo que el rival acaba de hacer
+delante de él resulta redundante). Con el flag en `False` el robot sigue
+reaccionando a las capturas y a los jaques, que sí aportan.
+
+En todo caso recuerda con amabilidad que le toca si tarda mucho
+(`VOICE_IDLE_PROMPT_S`), saluda, dice «te toca» tras mover y despide la
+partida. Cada situación tiene entre 3 y 7 formulaciones distintas y nunca
+repite la última usada.
 
 ### Detalles que importan
 
