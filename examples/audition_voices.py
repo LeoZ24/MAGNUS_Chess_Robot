@@ -1,24 +1,29 @@
 #!/usr/bin/env python3
-"""Audición de voces: genera el mismo texto con varias voces para elegir una.
+"""Audición de voces: escucha las mismas frases con varias voces y elige una.
 
 La voz del robot es una decisión de oído, no de código: este script sintetiza
-las mismas frases de una partida real con cada voz candidata y deja los WAV en
-una carpeta para que los escuches y decidas.
+frases reales de una partida con cada voz candidata para que decidas tú.
 
-Uso típico (la primera vez descarga los modelos, necesita internet)::
+Dos motores:
 
-    python examples/audition_voices.py
-    python examples/audition_voices.py --play             # además los reproduce
-    python examples/audition_voices.py --voices es_MX-claude-high es_ES-davefx-medium
-    python examples/audition_voices.py --length-scale 0.9 # habla más rápido
+    * ``say`` de macOS  — no requiere instalar nada; las voces ya están en el
+      sistema (y se pueden descargar más, mejores, en Ajustes > Accesibilidad >
+      Contenido hablado).
+    * Piper             — voz neuronal local, la que se usará en la Raspberry
+      Pi.  Requiere ``pip install piper-tts`` y descargar los modelos.
 
-Cuando tengas la elegida, ponla en ``magnus/config.py``::
+Uso::
 
-    VOICE_PIPER_MODEL = "la_que_te_guste"
+    python examples/audition_voices.py                 # el motor disponible
+    python examples/audition_voices.py --engine say    # solo voces de macOS
+    python examples/audition_voices.py --engine say --all-spanish
+    python examples/audition_voices.py --engine piper --play
+    python examples/audition_voices.py --list          # solo listar, sin hablar
 
-Ver todas las voces disponibles: https://huggingface.co/rhasspy/piper-voices
-(carpetas ``es/es_ES`` y ``es/es_MX``).  Si una candidata ya no existe, el
-script lo dice y sigue con las demás.
+Cuando elijas, ponla en ``magnus/config.py``:
+
+    VOICE_MACOS_VOICE  = "Juan"                # si usas `say`
+    VOICE_PIPER_MODEL  = "es_MX-claude-high"   # si usas Piper
 """
 
 from __future__ import annotations
@@ -32,11 +37,16 @@ from pathlib import Path
 sys.path.insert(0, __file__.rsplit("/examples/", 1)[0])
 
 from magnus import config  # noqa: E402
-from magnus.voice.backend import PiperBackend, _play_wav  # noqa: E402
+from magnus.voice.backend import (  # noqa: E402
+    MacSayBackend,
+    PiperBackend,
+    _play_wav,
+    list_system_voices,
+)
 
-# Candidatas en español.  Son las habituales del catálogo de Piper; si alguna no
-# está disponible se salta sin romper la audición.
-CANDIDATE_VOICES = (
+# Candidatas de Piper en español.  Si alguna ya no existe en el catálogo, se
+# salta sin romper la audición.
+CANDIDATE_PIPER_VOICES = (
     "es_ES-davefx-medium",      # España, masculina
     "es_ES-sharvard-medium",    # España, femenina
     "es_MX-claude-high",        # México, masculina (alta calidad)
@@ -56,6 +66,67 @@ SAMPLE_LINES = (
 )
 
 
+# --------------------------------------------------------------------------- #
+# Comprobaciones previas
+# --------------------------------------------------------------------------- #
+def piper_is_importable() -> bool:
+    try:
+        import piper  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+def explain_missing_piper() -> None:
+    """El fallo típico: piper instalado en OTRO Python distinto del que corre."""
+    print("\n⚠️  Este Python no tiene piper-tts instalado:")
+    print(f"      {sys.executable}")
+    print("\n   Suele pasar por tener varios Python: `pip install piper-tts` lo")
+    print("   instaló en uno y el script corre con otro. Instálalo en ESTE:")
+    print(f"\n      {sys.executable} -m pip install piper-tts\n")
+    print("   Mientras tanto puedes audicionar las voces del sistema:")
+    print("      python examples/audition_voices.py --engine say\n")
+
+
+# --------------------------------------------------------------------------- #
+# macOS `say`
+# --------------------------------------------------------------------------- #
+def audition_say(args) -> int:
+    voices = list_system_voices(spanish_only=True)
+    if not voices:
+        print("No hay voces en español instaladas (o no estás en macOS).")
+        print("Descárgalas en Ajustes > Accesibilidad > Contenido hablado > "
+              "Voz del sistema > Español.")
+        return 2
+
+    # Por defecto se audicionan las masculinas (MAGNUS habla en masculino).
+    candidatas = [v for v in voices if v.probably_male] if not args.all_spanish else voices
+    if not candidatas:
+        print("No se reconoció ninguna voz masculina; se audicionan todas.")
+        candidatas = voices
+
+    print(f"Voces en español instaladas ({len(voices)}):")
+    for v in voices:
+        marca = "♂" if v.probably_male else " "
+        print(f"  {marca} {v.name:<28} {v.locale}")
+    if args.list:
+        return 0
+
+    print(f"\nAudicionando {len(candidatas)}. Ctrl-C para parar.\n")
+    for voice in candidatas:
+        print(f"▶ {voice.name} ({voice.locale})")
+        backend = MacSayBackend(voice=voice.name, rate=args.rate)
+        for line in SAMPLE_LINES:
+            print(f"    «{line}»")
+            backend.speak(line)
+    print("\nElige la que más te guste y ponla en magnus/config.py:")
+    print('      VOICE_MACOS_VOICE = "…"')
+    return 0
+
+
+# --------------------------------------------------------------------------- #
+# Piper
+# --------------------------------------------------------------------------- #
 def download_voice(name: str, data_dir: Path) -> bool:
     """Descarga una voz si no está ya; ``False`` si no se pudo."""
     if (data_dir / f"{name}.onnx").is_file():
@@ -72,19 +143,10 @@ def download_voice(name: str, data_dir: Path) -> bool:
     return True
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Audición de voces para MAGNUS")
-    parser.add_argument("--voices", nargs="*", default=list(CANDIDATE_VOICES),
-                        help="Voces de Piper a probar")
-    parser.add_argument("--data-dir", default="voices",
-                        help="Carpeta donde se guardan los modelos")
-    parser.add_argument("--output", default="voices/audicion",
-                        help="Carpeta donde se dejan los WAV generados")
-    parser.add_argument("--length-scale", type=float, default=config.VOICE_LENGTH_SCALE,
-                        help="Velocidad del habla (<1 más rápido, >1 más lento)")
-    parser.add_argument("--play", action="store_true",
-                        help="Reproducir cada frase según se genera")
-    args = parser.parse_args()
+def audition_piper(args) -> int:
+    if not piper_is_importable():
+        explain_missing_piper()
+        return 2
 
     data_dir = Path(args.data_dir)
     out_dir = Path(args.output)
@@ -118,10 +180,42 @@ def main() -> int:
         return 2
 
     print(f"\n{len(generated)} audios en {out_dir}/. Escúchalos y quédate con una.")
-    print("Luego ponla en magnus/config.py:  VOICE_PIPER_MODEL = \"…\"")
-    print("Consejo: júzgalas con el ruido de una feria en mente — prima que se "
-          "entienda por encima de que suene bonita.")
+    print('Luego ponla en magnus/config.py:  VOICE_PIPER_MODEL = "…"')
     return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Audición de voces para MAGNUS")
+    parser.add_argument("--engine", choices=["auto", "say", "piper"], default="auto",
+                        help="Motor a audicionar (auto: Piper si está, si no say)")
+    parser.add_argument("--list", action="store_true",
+                        help="Solo listar las voces disponibles, sin hablar")
+    # Opciones de `say`
+    parser.add_argument("--all-spanish", action="store_true",
+                        help="say: audicionar todas las voces en español, no solo las masculinas")
+    parser.add_argument("--rate", type=int, default=config.VOICE_MACOS_RATE,
+                        help="say: velocidad en palabras por minuto")
+    # Opciones de Piper
+    parser.add_argument("--voices", nargs="*", default=list(CANDIDATE_PIPER_VOICES),
+                        help="piper: voces a probar")
+    parser.add_argument("--data-dir", default="voices",
+                        help="piper: carpeta donde se guardan los modelos")
+    parser.add_argument("--output", default="voices/audicion",
+                        help="piper: carpeta donde se dejan los WAV generados")
+    parser.add_argument("--length-scale", type=float, default=config.VOICE_LENGTH_SCALE,
+                        help="piper: velocidad del habla (<1 más rápido)")
+    parser.add_argument("--play", action="store_true",
+                        help="piper: reproducir cada frase según se genera")
+    args = parser.parse_args()
+
+    engine = args.engine
+    if engine == "auto":
+        engine = "piper" if piper_is_importable() else "say"
+        print(f"(motor elegido automáticamente: {engine})")
+        if engine == "say":
+            explain_missing_piper()
+
+    return audition_say(args) if engine == "say" else audition_piper(args)
 
 
 if __name__ == "__main__":

@@ -465,12 +465,25 @@ jugar en `BEGINNER` para que le ganes y aun así **comentar como un maestro**.
 falso: **quedarse sin voz nunca interrumpe una partida**.
 
 ```bash
-pip install piper-tts
-python -m piper.download_voices es_ES-davefx-medium --data-dir voices/
-python examples/audition_voices.py        # audiciona varias y elige la que más te guste
+# Voces del sistema (macOS): no hay que instalar nada
+python examples/audition_voices.py --engine say        # audiciona las masculinas
+python examples/audition_voices.py --engine say --all-spanish --list
+
+# Piper (para la Raspberry Pi). OJO: instálalo en el MISMO Python con el que
+# ejecutas el proyecto — tener varios Python es la causa nº 1 de
+# "No module named 'piper'":
+python3 -m pip install piper-tts
+python3 -m piper.download_voices es_MX-claude-high --data-dir voices/
+python examples/audition_voices.py --engine piper --play
 ```
 
-La voz elegida se pone en `magnus/config.py` → `VOICE_PIPER_MODEL`.
+La voz elegida se pone en `magnus/config.py` → `VOICE_MACOS_VOICE` (para `say`)
+o `VOICE_PIPER_MODEL` (para Piper). También se puede probar sin editar nada:
+`python examples/run_vision_demo.py --say-voice Jorge`.
+
+MAGNUS habla en masculino, así que la voz por defecto de macOS es **Juan**
+(es_MX); si no está instalada, el backend busca otra voz masculina en español
+en vez de quedarse mudo.
 
 ### Detalles que importan
 

@@ -29,6 +29,7 @@ import subprocess
 import tempfile
 import wave
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Sequence
 
@@ -104,21 +105,122 @@ class FakeSpeechBackend(SpeechBackend):
 # --------------------------------------------------------------------------- #
 # macOS `say`
 # --------------------------------------------------------------------------- #
+@dataclass(frozen=True)
+class SystemVoice:
+    """Una voz instalada en el sistema (``say -v '?'``)."""
+
+    name: str
+    locale: str          # "es_MX", "es_ES", ...
+    sample: str = ""     # frase de ejemplo que imprime el propio `say`
+
+    @property
+    def language(self) -> str:
+        return self.locale.split("_")[0]
+
+    @property
+    def is_spanish(self) -> bool:
+        return self.language == "es"
+
+    @property
+    def probably_male(self) -> bool:
+        """Heurística por nombre: ``say`` no dice el género de la voz."""
+        return self.name.split()[0] in MALE_SPANISH_VOICES
+
+
+# Voces masculinas en español conocidas de macOS.  `say` no expone el género,
+# así que esta lista solo sirve para *sugerir* — la última palabra la tiene el
+# oído (examples/audition_voices.py).
+MALE_SPANISH_VOICES: frozenset[str] = frozenset({
+    "Jorge",      # es_ES
+    "Juan",       # es_MX
+    "Diego",      # es_AR
+    "Carlos",     # es_MX (en algunas versiones)
+    "Enrique",    # es_ES (en algunas versiones)
+})
+
+
+def list_system_voices(spanish_only: bool = False) -> list[SystemVoice]:
+    """Voces instaladas en macOS, leídas de ``say -v '?'``.
+
+    Devuelve lista vacía si no hay ``say`` (no es macOS) o si falla.
+    """
+    if shutil.which("say") is None:
+        return []
+    try:
+        output = subprocess.run(
+            ["say", "-v", "?"], capture_output=True, text=True, check=True
+        ).stdout
+    except (OSError, subprocess.CalledProcessError) as exc:
+        logger.debug("No se pudieron listar las voces del sistema: %s", exc)
+        return []
+
+    voices: list[SystemVoice] = []
+    for line in output.splitlines():
+        head, _, sample = line.partition("#")
+        parts = head.split()
+        if len(parts) < 2:
+            continue
+        # El nombre puede llevar espacios ("Eddy (Spanish (Mexico))"), así que
+        # el idioma es siempre el ÚLTIMO campo y el nombre todo lo anterior.
+        voice = SystemVoice(
+            name=" ".join(parts[:-1]), locale=parts[-1], sample=sample.strip()
+        )
+        if spanish_only and not voice.is_spanish:
+            continue
+        voices.append(voice)
+    return voices
+
+
 class MacSayBackend(SpeechBackend):
     """Voz mediante el comando ``say`` de macOS (respaldo sin instalación).
 
     Las voces en español instaladas se listan con ``say -v '?' | grep es_``.
     En Ajustes > Accesibilidad > Contenido hablado se pueden descargar voces
     "mejoradas"/"premium", bastante mejores que las que vienen de serie.
+
+    Si la voz configurada no está instalada **no falla**: busca otra en español
+    (masculina si la hay, porque MAGNUS habla en masculino) y avisa por log.
+    Quedarse sin voz a mitad de una demostración por un nombre mal escrito sería
+    absurdo.
     """
 
     def __init__(
         self,
         voice: str = config.VOICE_MACOS_VOICE,
         rate: int = config.VOICE_MACOS_RATE,
+        prefer_male: bool = True,
     ):
-        self.voice = voice
         self.rate = rate
+        self.prefer_male = prefer_male
+        self.voice = self._resolve_voice(voice)
+
+    def _resolve_voice(self, wanted: str) -> Optional[str]:
+        """Devuelve la voz a usar: la pedida si existe, o la mejor alternativa."""
+        installed = list_system_voices()
+        if not installed:                      # no es macOS, o `say` no responde
+            return wanted
+        names = {v.name for v in installed}
+        if wanted in names:
+            return wanted
+
+        spanish = [v for v in installed if v.is_spanish]
+        candidates = [v for v in spanish if v.probably_male] if self.prefer_male else []
+        candidates = candidates or spanish
+        if not candidates:
+            logger.warning(
+                "No hay ninguna voz en español instalada; se usa la voz por "
+                "defecto del sistema. Descárgalas en Ajustes > Accesibilidad > "
+                "Contenido hablado > Voz del sistema."
+            )
+            return None
+        chosen = candidates[0].name
+        logger.warning(
+            "La voz %r no está instalada; se usa %r (%s). Voces en español "
+            "disponibles: %s",
+            wanted, chosen, candidates[0].locale,
+            ", ".join(v.name for v in spanish),
+        )
+        return chosen
 
     @property
     def is_available(self) -> bool:

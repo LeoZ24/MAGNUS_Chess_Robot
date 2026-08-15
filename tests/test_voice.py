@@ -384,3 +384,87 @@ def test_scholars_mate_is_not_called_a_blunder():
     com.observe(PositionEval(evaluation_cp=40, side_to_move="black"))
     quality = com.judge_human_move(PositionEval(mate_in=0, side_to_move="black"))
     assert quality is MoveQuality.GREAT
+
+
+# --------------------------------------------------------------------------- #
+# Voces del sistema (macOS `say`)
+# --------------------------------------------------------------------------- #
+SAY_OUTPUT = """\
+Alex                en_US    # Most people recognize me by my voice.
+Diego               es_AR    # Hola, me llamo Diego.
+Eddy (Spanish (Mexico)) es_MX # ¡Hola! Me llamo Eddy.
+Jorge               es_ES    # Hola, me llamo Jorge.
+Juan                es_MX    # Hola, me llamo Juan.
+Paulina             es_MX    # Hola, me llamo Paulina.
+Samantha            en_US    # Hello, my name is Samantha.
+"""
+
+
+def fake_say_listing(monkeypatch, output=SAY_OUTPUT, available=True):
+    """Simula `say -v '?'` sin estar en macOS."""
+    import subprocess
+
+    from magnus.voice import backend as backend_module
+
+    monkeypatch.setattr(backend_module.shutil, "which",
+                        lambda name: "/usr/bin/say" if available else None)
+    monkeypatch.setattr(
+        backend_module.subprocess, "run",
+        lambda *a, **k: subprocess.CompletedProcess(a, 0, stdout=output, stderr=""),
+    )
+
+
+def test_list_system_voices_parses_names_with_spaces(monkeypatch):
+    """Las voces modernas traen paréntesis: "Eddy (Spanish (Mexico))"."""
+    from magnus.voice.backend import list_system_voices
+
+    fake_say_listing(monkeypatch)
+    voices = {v.name: v.locale for v in list_system_voices()}
+    assert voices["Eddy (Spanish (Mexico))"] == "es_MX"
+    assert voices["Juan"] == "es_MX"
+    assert len(voices) == 7
+
+
+def test_list_system_voices_can_filter_spanish(monkeypatch):
+    from magnus.voice.backend import list_system_voices
+
+    fake_say_listing(monkeypatch)
+    nombres = [v.name for v in list_system_voices(spanish_only=True)]
+    assert "Alex" not in nombres and "Juan" in nombres
+
+
+def test_list_system_voices_is_empty_outside_macos(monkeypatch):
+    from magnus.voice.backend import list_system_voices
+
+    fake_say_listing(monkeypatch, available=False)
+    assert list_system_voices() == []
+
+
+def test_missing_voice_falls_back_to_a_spanish_male_one(monkeypatch):
+    """Un nombre mal escrito no puede dejar mudo al robot en plena feria."""
+    from magnus.voice.backend import MALE_SPANISH_VOICES, MacSayBackend
+
+    fake_say_listing(monkeypatch)
+    backend = MacSayBackend(voice="NoExisteEstaVoz")
+    assert backend.voice in MALE_SPANISH_VOICES
+
+
+def test_installed_voice_is_respected(monkeypatch):
+    from magnus.voice.backend import MacSayBackend
+
+    fake_say_listing(monkeypatch)
+    assert MacSayBackend(voice="Paulina").voice == "Paulina"
+
+
+def test_fallback_without_male_voices_uses_any_spanish(monkeypatch):
+    from magnus.voice.backend import MacSayBackend
+
+    fake_say_listing(monkeypatch, output="Paulina es_MX # Hola.\nAlex en_US # Hi.\n")
+    assert MacSayBackend(voice="Juan").voice == "Paulina"
+
+
+def test_default_macos_voice_is_male():
+    """MAGNUS habla en masculino: la voz por defecto debe serlo."""
+    from magnus.voice.backend import MALE_SPANISH_VOICES
+
+    assert config.VOICE_MACOS_VOICE in MALE_SPANISH_VOICES

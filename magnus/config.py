@@ -120,7 +120,13 @@ COMMENT_ADVANTAGE_EVERY_MOVES: int = 4
 VOICE_PIPER_MODEL: str = "es_ES-davefx-medium"
 VOICE_LENGTH_SCALE: float = 0.95
 # Voz del comando `say` de macOS (respaldo cuando no hay modelo de Piper).
-VOICE_MACOS_VOICE: str = "Paulina"
+# MAGNUS habla en masculino, así que por defecto se usa una voz masculina.
+# Habituales en español: Juan (es_MX), Jorge (es_ES), Diego (es_AR); femeninas:
+# Paulina (es_MX), Mónica (es_ES).  Si la configurada no está instalada, el
+# backend busca otra en español en vez de fallar — lista las tuyas con:
+#   say -v '?' | grep es_
+# En Ajustes > Accesibilidad > Contenido hablado se descargan las "mejoradas".
+VOICE_MACOS_VOICE: str = "Juan"
 VOICE_MACOS_RATE: int = 185          # palabras por minuto
 
 # Frases en cola como máximo; si se llena, se descartan las más viejas para no

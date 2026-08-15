@@ -41,6 +41,7 @@ Uso:
     python examples/run_vision_demo.py --synthetic         # sin cámara (simulado)
     python examples/run_vision_demo.py --no-engine
     python examples/run_vision_demo.py --icons assets/pieces
+    python examples/run_vision_demo.py --say-voice Jorge   # otra voz de macOS
     python examples/run_vision_demo.py --synthetic --screenshot demo.png
 
 Iconos personalizados: pon PNGs llamados wP.png, wN.png, wB.png, wR.png,
@@ -473,6 +474,9 @@ def main() -> int:
                         help="Arranca en silencio: subtítulos sí, audio no")
     parser.add_argument("--voice-model", default=None,
                         help="Ruta al .onnx de la voz de Piper a usar")
+    parser.add_argument("--say-voice", default=None,
+                        help="Voz de macOS a usar (p. ej. Juan, Jorge, Diego); "
+                             "lístalas con: say -v '?' | grep es_")
     parser.add_argument("--difficulty", default="MEDIUM",
                         help="Dificultad del engine (EASY/MEDIUM/HARD/...)")
     parser.add_argument("--robot-side", choices=["white", "black"], default="black",
@@ -538,10 +542,14 @@ def main() -> int:
     voice = None
     if not args.no_voice:
         from magnus.voice import VoiceNode
-        from magnus.voice.backend import PiperBackend, default_backend
+        from magnus.voice.backend import MacSayBackend, PiperBackend, default_backend
 
-        backend = (PiperBackend(model=args.voice_model) if args.voice_model
-                   else default_backend())
+        if args.voice_model:
+            backend = PiperBackend(model=args.voice_model)
+        elif args.say_voice:
+            backend = MacSayBackend(voice=args.say_voice)
+        else:
+            backend = default_backend()
         voice = VoiceNode(
             backend=backend,
             robot_side="white" if robot_color == chess.WHITE else "black",
