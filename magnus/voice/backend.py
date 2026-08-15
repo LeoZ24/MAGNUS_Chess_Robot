@@ -5,9 +5,10 @@ interfaz abstracta y varias implementaciones, para poder testear sin hardware
 de audio.
 
     * :class:`PiperBackend`  — voz neuronal **local** (recomendado).  Funciona
-      sin internet y corre igual en el Mac y en la Raspberry Pi, así que el
-      código sobrevive la migración.  Necesita el paquete ``piper-tts`` y un
-      modelo de voz descargado.
+      sin internet, así que no depende del wifi de la feria, y el mismo código
+      sirve en el Mac y en una Raspberry Pi si el proyecto continúa.  Necesita
+      el paquete ``piper-tts`` y un modelo de voz descargado (60-110 MB, fuera
+      de git).
     * :class:`MacSayBackend` — el comando ``say`` de macOS.  Cero instalación,
       pero solo existe en Mac: sirve de respaldo mientras se prepara Piper.
     * :class:`FakeSpeechBackend` — no suena nada, solo guarda lo que se dijo.

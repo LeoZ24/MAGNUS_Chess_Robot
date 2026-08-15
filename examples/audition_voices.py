@@ -9,8 +9,9 @@ Dos motores:
     * ``say`` de macOS  — no requiere instalar nada; las voces ya están en el
       sistema (y se pueden descargar más, mejores, en Ajustes > Accesibilidad >
       Contenido hablado).
-    * Piper             — voz neuronal local, la que se usará en la Raspberry
-      Pi.  Requiere ``pip install piper-tts`` y descargar los modelos.
+    * Piper             — voz neuronal local: funciona igual en el Mac y, si
+      el proyecto continúa, en una Raspberry Pi.  Requiere ``pip install
+      piper-tts`` y descargar los modelos (60-110 MB, NO se suben a git).
 
 Uso::
 
