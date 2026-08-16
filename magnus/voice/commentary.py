@@ -279,10 +279,21 @@ class Commentator:
     ) -> Optional[str]:
         """Avisa de por qué el tablero no encaja, sin repetirse.
 
-        Devuelve ``None`` si ya se avisó de ese mismo problema y todavía no se
-        ha resuelto: durante una jugada larga el aviso se dispararía en bucle.
+        Devuelve ``None`` en tres casos:
+
+        * el problema no está en ``config.VOICE_WARN_BOARD_PROBLEMS`` (por
+          defecto solo se canta la jugada ilegal — ver el porqué allí);
+        * ya se avisó de ese mismo problema y sigue sin resolverse: durante una
+          jugada larga el aviso se dispararía en bucle;
+        * el tablero está bien.
+
+        Los problemas silenciados **no** se apuntan en ``_last_problem``: si se
+        apuntaran, :meth:`board_is_fine_again` soltaría un "ahora sí, seguimos"
+        por un problema del que nunca se avisó.
         """
         problem = diagnose_placement(expected, detected)
+        if problem.value not in config.VOICE_WARN_BOARD_PROBLEMS:
+            return None
         if problem is self._last_problem:
             return None
         self._last_problem = problem

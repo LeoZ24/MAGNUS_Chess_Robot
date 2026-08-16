@@ -508,19 +508,26 @@ en vez de quedarse mudo.
 
 ### Qué más dice
 
-Además de narrar y evaluar, el robot **puede** avisar cuando el tablero no
-cuadra, distinguiendo **qué** está pasando en vez de soltar un genérico "no
-entiendo". Viene **desactivado** (`VOICE_WARN_BOARD_PROBLEMS = False`): con
-poca luz la detección de algunas piezas parpadea, y cada parpadeo se
-interpretaba como una pieza retirada, así que el robot avisaba de faltas
-inexistentes. Poniéndolo en `True` se recupera este repertorio:
+Además de narrar y evaluar, el robot avisa cuando el tablero no cuadra, y
+distingue **qué** está pasando en vez de soltar un genérico "no entiendo".
+`VOICE_WARN_BOARD_PROBLEMS` elige de cuáles de estos avisa en voz alta:
 
-| Situación detectada | Qué dice |
-|---|---|
-| Falta una pieza, no hay ninguna nueva | «¿Tienes una pieza en la mano? Colócala cuando decidas.» |
-| Una pieza cambió de casilla pero la jugada no es legal | «Esa jugada no es legal. Devuelve la pieza a su sitio.» |
-| Demasiadas diferencias (mano encima, piezas caídas) | «Algo no cuadra en el tablero. Revísalo, por favor.» |
-| El tablero vuelve a ser correcto | «Ahora sí. Seguimos.» |
+| Situación detectada | Qué dice | ¿Por defecto? |
+|---|---|---|
+| Una pieza cambió de casilla pero la jugada no es legal | «Esa jugada no es legal. Devuelve la pieza a su sitio.» | ✅ sí |
+| Falta una pieza, no hay ninguna nueva | «¿Tienes una pieza en la mano? Colócala cuando decidas.» | ❌ no |
+| Demasiadas diferencias (mano encima, piezas caídas) | «Algo no cuadra en el tablero. Revísalo, por favor.» | ❌ no |
+| El tablero vuelve a ser correcto | «Ahora sí. Seguimos.» | tras un aviso |
+
+**Por qué solo la jugada ilegal.** Los otros dos avisos se apoyan en que una
+pieza *desaparezca* del tablero, y con poca luz la detección parpadea: las
+piezas se pierden un par de segundos y vuelven, así que saltaban en falso todo
+el rato. Una jugada ilegal exige que la pieza reaparezca en **otra** casilla,
+cosa que el parpadeo no produce — por eso este aviso sí aguanta con mala luz. Y
+además es el único que le dice al rival algo que no sabe ya.
+
+Los problemas silenciados tampoco disparan el «ahora sí, seguimos»: sería raro
+oír el visto bueno de algo de lo que nunca se avisó.
 
 El aviso **no se repite** mientras el problema siga igual: durante una jugada
 larga saldría en bucle. La clasificación vive en `commentary.diagnose_placement()`
