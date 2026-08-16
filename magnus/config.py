@@ -150,15 +150,23 @@ VOICE_QUEUE_MAX: int = 5
 # capturas y a los jaques, que sí aportan.
 VOICE_ANNOUNCE_HUMAN_MOVES: bool = False
 
-# Avisar por voz de problemas en el tablero (pieza en la mano, jugada ilegal,
-# posición irreconocible).
+# De QUÉ problemas de tablero avisa el robot por voz.  Los valores son los de
+# magnus.voice.commentary.BoardProblem — se listan como texto porque este módulo
+# no puede importar `voice` (sería un import circular: `voice` ya importa
+# `config`).  Un test comprueba que estos nombres existen de verdad, así que una
+# errata aquí se caza en CI, no en la feria.
 #
-# Desactivado por defecto: con poca luz la detección de algunas piezas parpadea
-# — se detectan, se pierden un par de segundos y vuelven —, y cada parpadeo se
-# interpretaba como una pieza retirada del tablero.  El robot acababa avisando
-# de faltas que no existían.  La lógica sigue disponible (`diagnose_placement`)
-# para reactivarla cuando la iluminación sea fiable.
-VOICE_WARN_BOARD_PROBLEMS: bool = False
+#   "jugada ilegal"          -> una pieza apareció en una casilla donde no puede
+#   "pieza levantada"        -> falta una pieza del tablero
+#   "posición irreconocible" -> demasiadas diferencias para adivinar qué pasa
+#
+# Por defecto solo se avisa de la jugada ilegal, que es el aviso útil: le dice
+# al rival algo que él no sabe.  Los otros dos se apoyan en que una pieza
+# DESAPAREZCA del tablero, y con poca luz la detección parpadea — las piezas se
+# pierden un par de segundos y vuelven —, así que saltaban en falso todo el
+# rato.  Una jugada ilegal exige que la pieza reaparezca en OTRA casilla, cosa
+# que el parpadeo no produce: por eso este aviso sí es fiable con mala luz.
+VOICE_WARN_BOARD_PROBLEMS: tuple[str, ...] = ("jugada ilegal",)
 
 # Segundos sin que el rival mueva antes de recordárselo con amabilidad.
 # 0 desactiva el recordatorio.

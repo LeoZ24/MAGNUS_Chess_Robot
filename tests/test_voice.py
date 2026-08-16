@@ -602,6 +602,24 @@ def test_no_voices_downloaded_returns_none(tmp_path, monkeypatch):
 # Problemas del tablero: jugada ilegal, pieza en la mano, posición rara
 # --------------------------------------------------------------------------- #
 POSICION = {"e1": "K", "e8": "k", "d4": "Q", "a2": "P"}
+SIN_PEON = {sq: p for sq, p in POSICION.items() if sq != "a2"}   # pieza en la mano
+MOVIDA_ILEGAL = {**SIN_PEON, "a5": "P"}                          # jugada ilegal
+REVUELTO = {"e1": "K"}                                           # irreconocible
+
+
+@pytest.fixture
+def avisar_de_todo(monkeypatch):
+    """Activa el aviso de los tres problemas.
+
+    La mecánica (no repetirse, distinguir un problema de otro) es independiente
+    de qué problemas se cantan por defecto, así que se testea con todos
+    activados; la política por defecto tiene sus propios tests.
+    """
+    from magnus.voice.commentary import BoardProblem
+
+    monkeypatch.setattr(
+        config, "VOICE_WARN_BOARD_PROBLEMS", tuple(p.value for p in BoardProblem)
+    )
 
 
 def test_lifted_piece_is_detected():
@@ -644,28 +662,37 @@ def test_hand_covering_the_board_is_confusing():
     assert diagnose_placement(POSICION, tapado) is BoardProblem.CONFUSING
 
 
-def test_board_warning_is_not_repeated_while_the_problem_persists():
+def test_board_warning_is_not_repeated_while_the_problem_persists(avisar_de_todo):
     """El aviso saldría en cada frame mientras el rival piensa con la pieza en la mano."""
     com = Commentator(robot_side="black")
-    sin_peon = {sq: p for sq, p in POSICION.items() if sq != "a2"}
-    assert com.comment_board_problem(POSICION, sin_peon) is not None
-    assert com.comment_board_problem(POSICION, sin_peon) is None
+    assert com.comment_board_problem(POSICION, SIN_PEON) is not None
+    assert com.comment_board_problem(POSICION, SIN_PEON) is None
 
 
-def test_a_different_problem_does_get_a_new_warning():
+def test_a_different_problem_does_get_a_new_warning(avisar_de_todo):
     com = Commentator(robot_side="black")
-    sin_peon = {sq: p for sq, p in POSICION.items() if sq != "a2"}
-    com.comment_board_problem(POSICION, sin_peon)
-    assert com.comment_board_problem(POSICION, {"e1": "K"}) is not None
+    com.comment_board_problem(POSICION, SIN_PEON)
+    assert com.comment_board_problem(POSICION, REVUELTO) is not None
 
 
 def test_board_fixed_only_speaks_after_a_warning():
     com = Commentator(robot_side="black")
     assert com.board_is_fine_again() is None          # nunca hubo problema
-    sin_peon = {sq: p for sq, p in POSICION.items() if sq != "a2"}
-    com.comment_board_problem(POSICION, sin_peon)
+    com.comment_board_problem(POSICION, MOVIDA_ILEGAL)
     assert com.board_is_fine_again() is not None      # se avisa de que ya está
     assert com.board_is_fine_again() is None          # y no se repite
+
+
+def test_a_silenced_problem_does_not_trigger_the_all_clear():
+    """Sin aviso previo no hay "ahora sí": el parpadeo no debe hacer hablar.
+
+    Es la trampa de filtrar el aviso pero seguir apuntando el problema: el
+    robot se callaría la falta y luego soltaría un "ya está bien" por algo que
+    nunca dijo.
+    """
+    com = Commentator(robot_side="black")
+    assert com.comment_board_problem(POSICION, SIN_PEON) is None
+    assert com.board_is_fine_again() is None
 
 
 def test_voice_node_warns_about_an_illegal_move():
@@ -682,10 +709,41 @@ def test_voice_node_warns_about_an_illegal_move():
 
 def test_new_game_forgets_the_pending_board_problem():
     voz = VoiceNode(backend=FakeSpeechBackend())
-    sin_peon = {sq: p for sq, p in POSICION.items() if sq != "a2"}
-    voz.warn_board_problem(POSICION, sin_peon)
+    voz.warn_board_problem(POSICION, MOVIDA_ILEGAL)
     voz.new_game()
-    assert voz.warn_board_problem(POSICION, sin_peon) is not None
+    assert voz.warn_board_problem(POSICION, MOVIDA_ILEGAL) is not None
+
+
+# --------------------------------------------------------------------------- #
+# De qué problemas se avisa por defecto
+# --------------------------------------------------------------------------- #
+def test_configured_problems_are_real_board_problems():
+    """Caza una errata en config.py aquí y no delante del jurado.
+
+    Los valores se escriben a mano porque `config` no puede importar `voice`.
+    """
+    from magnus.voice.commentary import BoardProblem
+
+    validos = {p.value for p in BoardProblem}
+    for nombre in config.VOICE_WARN_BOARD_PROBLEMS:
+        assert nombre in validos, f"{nombre!r} no es un BoardProblem; validos: {validos}"
+
+
+def test_an_illegal_move_is_announced_by_default():
+    """El aviso útil: le dice al rival algo que no sabe."""
+    com = Commentator(robot_side="black")
+    assert com.comment_board_problem(POSICION, MOVIDA_ILEGAL) is not None
+
+
+def test_a_missing_piece_is_not_announced_by_default():
+    """Con poca luz la detección parpadea y esto saltaba en falso todo el rato."""
+    com = Commentator(robot_side="black")
+    assert com.comment_board_problem(POSICION, SIN_PEON) is None
+
+
+def test_a_scrambled_board_is_not_announced_by_default():
+    com = Commentator(robot_side="black")
+    assert com.comment_board_problem(POSICION, REVUELTO) is None
 
 
 # --------------------------------------------------------------------------- #
@@ -725,19 +783,10 @@ def test_phrases_are_speakable_not_notation():
 def test_voice_settings_exist():
     assert config.VOICE_QUEUE_MAX >= 1
     assert isinstance(config.VOICE_ANNOUNCE_HUMAN_MOVES, bool)
-    assert isinstance(config.VOICE_WARN_BOARD_PROBLEMS, bool)
+    assert isinstance(config.VOICE_WARN_BOARD_PROBLEMS, tuple)
     assert config.VOICE_IDLE_PROMPT_S >= 0
 
 
 def test_the_robot_does_not_repeat_the_humans_move_out_loud():
     """Narrar la jugada del rival delante de él es redundante: viene apagado."""
     assert config.VOICE_ANNOUNCE_HUMAN_MOVES is False
-
-
-def test_board_warnings_are_off_because_detection_flickers():
-    """Con poca luz las piezas parpadean y el aviso salta en falso.
-
-    La lógica sigue existiendo y testeada (ver los tests de
-    ``diagnose_placement``); lo que está apagado es que el robot la cante.
-    """
-    assert config.VOICE_WARN_BOARD_PROBLEMS is False
