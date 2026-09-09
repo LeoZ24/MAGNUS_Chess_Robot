@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional
 
 from .. import config
 from ..core.messages import MoveResponse
@@ -166,12 +166,23 @@ class ArmNode:
     # ------------------------------------------------------------------ #
     # Ejecución
     # ------------------------------------------------------------------ #
-    def execute(self, resp: MoveResponse) -> list[ArmStep]:
-        """Planifica y reproduce la jugada en el backend. Devuelve el plan."""
+    def execute(
+        self,
+        resp: MoveResponse,
+        on_step: Optional[Callable[[int, ArmStep], None]] = None,
+    ) -> list[ArmStep]:
+        """Planifica y reproduce la jugada en el backend. Devuelve el plan.
+
+        ``on_step(índice, paso)`` se llama justo ANTES de ejecutar cada paso:
+        sirve para mostrar el progreso en una interfaz o para abortar (si el
+        callback lanza, la ejecución se detiene en ese paso).
+        """
         if not self._started:
             self.start()
         steps = self.plan(resp)
-        for step in steps:
+        for index, step in enumerate(steps):
+            if on_step is not None:
+                on_step(index, step)
             self._run_step(step)
         logger.info("Jugada %s ejecutada (%d pasos).", resp.uci, len(steps))
         return steps

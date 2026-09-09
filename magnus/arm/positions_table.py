@@ -37,9 +37,9 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Union
+from typing import Optional, Union
 
 from .. import config
 
@@ -49,6 +49,11 @@ _FILES = "abcdefgh"
 ALL_SQUARES: tuple[str, ...] = tuple(
     f"{f}{r}" for r in range(1, config.BOARD_SQUARES + 1) for f in _FILES
 )
+
+
+# Claves que la tabla debería tener para jugar una partida completa: las 64
+# casillas y las dos zonas (capturas y promociones).
+REQUIRED_KEYS: tuple[str, ...] = ALL_SQUARES + (config.ZONE_DISCARD, config.ZONE_EXCHANGE)
 
 
 class PositionsTableError(Exception):
@@ -164,3 +169,100 @@ def make_fake_table(include_zones: bool = True) -> PositionsTable:
             engage=JointAngles(shoulder=FAKE_VALUE + i + 0.5, elbow=-FAKE_VALUE - i - 0.5),
         )
     return PositionsTable(positions)
+
+
+# --------------------------------------------------------------------------- #
+# Inspección sin lanzar (para que la interfaz informe del estado de la tabla)
+# --------------------------------------------------------------------------- #
+@dataclass
+class PositionsReport:
+    """Estado de un ``positions.json`` sin cargarlo como tabla de juego.
+
+    A diferencia de :meth:`PositionsTable.load`, NUNCA lanza: una tabla a medio
+    calibrar es un estado normal mientras se graba el brazo, y la interfaz
+    quiere mostrar "calibradas 12 de 66" en vez de un error.
+    """
+
+    path: str
+    exists: bool = False
+    error: Optional[str] = None            # JSON roto, etc.
+    calibrated: list[str] = field(default_factory=list)   # entradas válidas
+    missing: list[str] = field(default_factory=list)      # ausentes o con null
+    invalid: list[str] = field(default_factory=list)      # mal formadas
+    unknown: list[str] = field(default_factory=list)      # claves que no son casilla/zona
+
+    @property
+    def total(self) -> int:
+        return len(REQUIRED_KEYS)
+
+    @property
+    def complete(self) -> bool:
+        """``True`` si la tabla sirve para jugar (64 casillas + 2 zonas)."""
+        return self.exists and self.error is None and not self.missing and not self.invalid
+
+    def to_dict(self) -> dict:
+        return {
+            "path": self.path,
+            "exists": self.exists,
+            "error": self.error,
+            "complete": self.complete,
+            "calibrated": len(self.calibrated),
+            "total": self.total,
+            "missing": list(self.missing),
+            "invalid": list(self.invalid),
+            "unknown": list(self.unknown),
+        }
+
+
+def _entry_is_calibrated(entry: object) -> Optional[bool]:
+    """``True`` válida, ``False`` sin rellenar (nulls), ``None`` mal formada."""
+    if not isinstance(entry, dict):
+        return None
+    values = []
+    for sub in ("approach", "engage"):
+        joints = entry.get(sub)
+        if not isinstance(joints, dict):
+            return None
+        for joint in ("shoulder", "elbow"):
+            if joint not in joints:
+                return None
+            values.append(joints[joint])
+    if all(v is None for v in values):
+        return False
+    if all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in values):
+        return True
+    return None
+
+
+def inspect_positions_file(path: Union[str, Path]) -> PositionsReport:
+    """Informe de cobertura de un ``positions.json`` (real o plantilla con nulls)."""
+    path = Path(path)
+    report = PositionsReport(path=str(path))
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        report.missing = list(REQUIRED_KEYS)
+        return report
+    except (json.JSONDecodeError, OSError) as exc:
+        report.exists = True
+        report.error = f"No se pudo leer {path.name}: {exc}"
+        report.missing = list(REQUIRED_KEYS)
+        return report
+    report.exists = True
+    if not isinstance(raw, dict):
+        report.error = "El JSON debe ser un objeto con una entrada por casilla."
+        report.missing = list(REQUIRED_KEYS)
+        return report
+    for key in REQUIRED_KEYS:
+        if key not in raw:
+            report.missing.append(key)
+            continue
+        state = _entry_is_calibrated(raw[key])
+        if state is True:
+            report.calibrated.append(key)
+        elif state is False:
+            report.missing.append(key)
+        else:
+            report.invalid.append(key)
+    report.unknown = [k for k in raw if k not in REQUIRED_KEYS]
+    return report

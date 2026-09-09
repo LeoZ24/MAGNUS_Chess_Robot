@@ -54,6 +54,7 @@ reemplazarse sin afectar a los demás.
 | **Visión**        | `magnus/vision/`      | ✅ Software completo | Detección → homografía → FEN exacta (turno/enroque por inferencia); falta validar con cámara/tablero reales |
 | **Brazo robótico**| `magnus/arm/`         | 🔶 Software listo    | Secuencias pregrabadas implementadas y testeadas con backend falso; falta hardware (CyberPi + tabla de posiciones real) |
 | **Voz**           | `magnus/voice/`       | ✅ Software completo | El robot narra sus jugadas y comenta las del rival en español; falta elegir la voz definitiva de oído |
+| **App de juego**  | `magnus/app/` + `play.py` | ✅ Completo      | Une los cuatro nodos en una aplicación con panel de control web: partida en vivo, dificultad en caliente, ajustes y brazo (apagado / simulado / CyberPi) |
 
 ---
 
@@ -590,7 +591,10 @@ resp_dict = response.to_dict()          # MoveResponse también tiene to_dict()
 - Zona de piezas capturadas y de intercambio (lógica; falta la física)
 - Integración de los tres nodos, demostrada sin hardware
   (`examples/run_full_pipeline_demo.py`)
-- Suite de tests completa (240+) con backends falsos — corre sin ningún hardware
+- Aplicación de juego con panel de control web (`play.py` + `magnus/app/`):
+  partida en vivo, dificultad en caliente, ajustes persistentes, brazo en modo
+  apagado / simulado / CyberPi
+- Suite de tests completa (320+) con backends falsos — corre sin ningún hardware
 - CI en GitHub Actions (tests en cada push/PR)
 - Generador de marcadores ArUco imprimibles y de la plantilla de posiciones
 
@@ -642,6 +646,57 @@ numpy>=1.23
 ---
 
 ## Ejecución rápida
+
+### Jugar (interfaz web) — el script final
+
+`play.py` arranca el robot completo (visión + engine + voz + brazo) y abre el
+**panel de control** en el navegador. Todo se maneja desde ahí: iniciar la
+partida, cambiar la dificultad a mitad de partida, elegir el color del robot,
+la cámara, la voz y el modo del brazo. No necesita ninguna dependencia nueva
+(el servidor usa la librería estándar de Python).
+
+```bash
+python3 play.py                       # webcam 0; abre http://localhost:8080
+python3 play.py --camera 1            # otra cámara (Iriun, OBS...)
+python3 play.py --synthetic           # sin cámara: tablero simulado que juega solo
+python3 play.py --list-cameras        # ¿qué índice da imagen?
+python3 play.py --host 0.0.0.0        # controlar también desde una tablet/móvil del hotspot
+python3 play.py --kiosk               # pantalla completa sin ajustes (feria)
+python3 play.py --no-engine --no-voice
+```
+
+Lo que se ve en pantalla:
+
+- **Pilotos de estado** (cámara, visión, engine, brazo, voz) en la barra superior.
+- **Cámara en vivo** con los marcadores por rol, la cuadrícula proyectada y la
+  jugada planificada; telemetría de detección y FEN.
+- **Tablero digital animado**: las piezas se deslizan, la jugada que MAGNUS va a
+  jugar late como flecha, el jaque brilla y las casillas con detección pendiente
+  parpadean. Barra de evaluación al lado.
+- **Banner de fase**: preparación (piezas detectadas 27/32) → *tu turno* →
+  *MAGNUS piensa* → *MAGNUS juega e4* → *brazo en movimiento* → fin de partida.
+- **Lista de jugadas, capturas, registro de actividad** y **subtítulo de la voz**.
+- **Ajustes** (engranaje o tecla `S`): dificultad (6 niveles con Elo), color,
+  cámara (girar mapeo, reiniciar detección), voz y brazo. Se guardan en
+  `magnus_settings.json` y se recuperan al arrancar.
+
+Atajos: `G` iniciar partida · `O` observar · `E` ejecutar brazo · `Esc` parada ·
+`F` girar vista · `T` girar mapeo · `R` reiniciar detección · `M` voz ·
+`S` ajustes · `K` pantalla completa.
+
+**El brazo** tiene tres modos seleccionables en Ajustes:
+
+| Modo | Qué hace | Requisitos |
+|------|----------|------------|
+| Apagado | MAGNUS canta la jugada y el humano mueve la pieza por él | ninguno (modo actual) |
+| Simulado | Muestra la secuencia exacta que ejecutaría el brazo, paso a paso, con backend falso | ninguno |
+| CyberPi | Ejecuta de verdad por TCP (`CyberPiBackend`) | `magnus/arm/positions.json` **completo** (64 casillas + `discard` + `exchange`) |
+
+La interfaz enseña cuántas posiciones están calibradas ("12 de 66") y cuáles
+faltan. Cuando la tabla esté completa, activar el brazo real es: copiar el
+archivo, elegir **CyberPi** y listo. Por seguridad, cada jugada física pide
+pulsar **Ejecutar** (o `E`); en Ajustes se puede activar la ejecución
+automática. El botón rojo **PARADA** (`Esc`) siempre está visible.
 
 ### Engine solo (sin hardware)
 

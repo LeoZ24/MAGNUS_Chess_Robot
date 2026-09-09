@@ -20,3 +20,6 @@ voices/
 
 # Marcadores ArUco generados (se regeneran con examples/generate_aruco_markers.py)
 aruco_markers/
+
+# Ajustes de la interfaz de juego (se generan al usar play.py)
+magnus_settings.json

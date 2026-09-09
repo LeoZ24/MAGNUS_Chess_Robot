@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MAGNUS · Panel de control</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='30' fill='%23060a12'/%3E%3Ctext x='32' y='44' font-size='36' text-anchor='middle' fill='%2335e0ff' font-family='sans-serif' font-weight='700'%3EM%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <div class="bg-grid" aria-hidden="true"></div>
+
+  <!-- Pantalla de arranque -->
+  <div id="boot" class="boot">
+    <div class="boot-logo">
+      <span class="boot-m">M</span><span class="boot-word">AGNUS</span>
+      <div class="boot-scan"></div>
+    </div>
+    <div class="boot-sub">CHESS ROBOT · SISTEMA DE CONTROL</div>
+    <ul class="boot-list">
+      <li data-boot="server"><span class="dot"></span>Enlace con el robot</li>
+      <li data-boot="camera"><span class="dot"></span>Cámara</li>
+      <li data-boot="vision"><span class="dot"></span>Visión ArUco</li>
+      <li data-boot="engine"><span class="dot"></span>Engine de ajedrez</li>
+      <li data-boot="voice"><span class="dot"></span>Voz</li>
+      <li data-boot="arm"><span class="dot"></span>Brazo</li>
+    </ul>
+    <div class="boot-hint">clic para continuar</div>
+  </div>
+
+  <!-- Barra superior -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">M</div>
+      <div class="brand-text">
+        <div class="brand-name">MAGNUS</div>
+        <div class="brand-tag">CHESS ROBOT</div>
+      </div>
+    </div>
+
+    <nav class="pills" id="pills">
+      <div class="pill" data-pill="camera"><span class="led"></span><span class="pill-label">Cámara</span></div>
+      <div class="pill" data-pill="vision"><span class="led"></span><span class="pill-label">Visión</span></div>
+      <div class="pill" data-pill="engine"><span class="led"></span><span class="pill-label">Engine</span></div>
+      <div class="pill" data-pill="arm"><span class="led"></span><span class="pill-label">Brazo</span></div>
+      <div class="pill" data-pill="voice"><span class="led"></span><span class="pill-label">Voz</span></div>
+    </nav>
+
+    <div class="top-actions">
+      <button class="chip chip-diff" id="chip-difficulty" title="Cambiar dificultad (S)">
+        <span class="chip-k">DIFICULTAD</span><span class="chip-v" id="chip-difficulty-v">—</span>
+      </button>
+      <div class="clock" id="clock">00:00</div>
+      <button class="icon-btn" id="btn-mute" title="Silenciar voz (M)">
+        <svg viewBox="0 0 24 24"><path d="M3 10v4h4l5 4V6L7 10H3z"/><path class="wave" d="M16 8.5a4 4 0 0 1 0 7M18.5 6a7.5 7.5 0 0 1 0 12"/></svg>
+      </button>
+      <button class="icon-btn" id="btn-fullscreen" title="Pantalla completa (K)">
+        <svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+      </button>
+      <button class="icon-btn" id="btn-settings" title="Ajustes (S)">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- Contenido principal -->
+  <main class="layout">
+
+    <!-- Columna izquierda: cámara -->
+    <section class="col col-left">
+      <div class="panel panel-camera">
+        <div class="panel-head">
+          <span class="panel-title">VISIÓN</span>
+          <span class="mono muted" id="camera-label">—</span>
+        </div>
+        <div class="camera-frame">
+          <img id="camera" alt="Cámara" src="/stream/camera.mjpg">
+          <div class="hud-corner tl"></div><div class="hud-corner tr"></div>
+          <div class="hud-corner bl"></div><div class="hud-corner br"></div>
+          <div class="camera-offline" id="camera-offline">
+            <div class="camera-offline-icon">◌</div>
+            <div id="camera-offline-text">Sin señal de cámara</div>
+          </div>
+        </div>
+        <div class="telemetry">
+          <div class="tele"><span class="tele-k">FPS</span><span class="tele-v" id="t-fps">—</span></div>
+          <div class="tele"><span class="tele-k">ESQUINAS</span><span class="tele-v" id="t-corners">—</span></div>
+          <div class="tele"><span class="tele-k">PIEZAS</span><span class="tele-v" id="t-pieces">—</span></div>
+          <div class="tele"><span class="tele-k">PENDIENTES</span><span class="tele-v" id="t-pending">—</span></div>
+          <div class="tele"><span class="tele-k">FUERA</span><span class="tele-v" id="t-off">—</span></div>
+          <div class="tele"><span class="tele-k">MARCADOR BRAZO</span><span class="tele-v" id="t-arm">—</span></div>
+        </div>
+        <div class="fen mono" id="fen">—</div>
+        <div class="vision-msg" id="vision-msg"></div>
+      </div>
+
+      <div class="panel panel-log">
+        <div class="panel-head"><span class="panel-title">ACTIVIDAD</span><span class="mono muted" id="log-count"></span></div>
+        <div class="log" id="log"></div>
+      </div>
+
+      <div class="panel panel-players">
+        <div class="player" id="player-human">
+          <div class="avatar avatar-human">TÚ</div>
+          <div class="player-info">
+            <div class="player-name">Rival humano</div>
+            <div class="player-sub" id="player-human-side">—</div>
+          </div>
+          <div class="player-turn">MUEVE</div>
+        </div>
+        <div class="vs">VS</div>
+        <div class="player" id="player-robot">
+          <div class="avatar avatar-robot">M</div>
+          <div class="player-info">
+            <div class="player-name">MAGNUS</div>
+            <div class="player-sub" id="player-robot-side">—</div>
+          </div>
+          <div class="player-turn">MUEVE</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Columna central: tablero -->
+    <section class="col col-center">
+      <div class="board-area">
+        <div class="evalbar" id="evalbar" title="Evaluación (desde las blancas)">
+          <div class="evalbar-black"></div>
+          <div class="evalbar-white" id="evalbar-white"></div>
+          <div class="evalbar-label" id="evalbar-label">0.0</div>
+        </div>
+
+        <div class="board-wrap">
+          <div class="banner" id="banner">
+            <div class="banner-kicker" id="banner-kicker">PREPARACIÓN</div>
+            <div class="banner-title" id="banner-title">Conectando…</div>
+            <div class="banner-detail" id="banner-detail"></div>
+            <div class="banner-actions" id="banner-actions"></div>
+          </div>
+
+          <div class="board" id="board">
+            <svg class="board-svg" id="board-svg" viewBox="0 0 8 8" preserveAspectRatio="none"></svg>
+            <div class="pieces" id="pieces"></div>
+            <svg class="board-overlay" id="board-overlay" viewBox="0 0 8 8" preserveAspectRatio="none">
+              <defs>
+                <marker id="arrow-head" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse">
+                  <path d="M0 0L10 5L0 10z" fill="var(--accent)"/>
+                </marker>
+              </defs>
+              <line id="planned-arrow" class="planned-arrow" x1="0" y1="0" x2="0" y2="0" marker-end="url(#arrow-head)" style="display:none"/>
+            </svg>
+            <div class="scanline" id="scanline"></div>
+            <div class="coords coords-files" id="coords-files"></div>
+            <div class="coords coords-ranks" id="coords-ranks"></div>
+          </div>
+
+          <div class="board-foot">
+            <div class="last-move mono" id="last-move">—</div>
+            <div class="board-msg" id="board-msg"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Columna derecha: partida y brazo -->
+    <section class="col col-right">
+      <div class="panel panel-moves">
+        <div class="panel-head">
+          <span class="panel-title">PARTIDA</span>
+          <span class="mono muted" id="move-count">0 jugadas</span>
+        </div>
+        <div class="moves" id="moves"><div class="moves-empty">Sin jugadas todavía</div></div>
+        <div class="captured">
+          <div class="cap-row"><span class="cap-k">TÚ</span><span class="cap-v" id="cap-human"></span><span class="cap-diff" id="cap-human-diff"></span></div>
+          <div class="cap-row"><span class="cap-k">MAGNUS</span><span class="cap-v" id="cap-robot"></span><span class="cap-diff" id="cap-robot-diff"></span></div>
+        </div>
+      </div>
+
+      <div class="panel panel-arm">
+        <div class="panel-head">
+          <span class="panel-title">BRAZO</span>
+          <span class="badge" id="arm-mode-badge">APAGADO</span>
+        </div>
+        <div class="arm-status">
+          <span class="led" id="arm-led"></span>
+          <span id="arm-status-text">—</span>
+        </div>
+        <div class="arm-progress" id="arm-progress">
+          <div class="arm-progress-bar" id="arm-progress-bar"></div>
+        </div>
+        <ol class="arm-steps" id="arm-steps"></ol>
+        <div class="arm-actions">
+          <button class="btn btn-primary" id="btn-arm-execute" hidden>▶ Ejecutar jugada</button>
+          <button class="btn btn-danger" id="btn-arm-stop" hidden>■ PARADA</button>
+        </div>
+        <div class="arm-coverage mono" id="arm-coverage"></div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Barra de voz -->
+  <footer class="voicebar">
+    <div class="wave" id="wave" aria-hidden="true">
+      <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+    </div>
+    <div class="subtitle" id="subtitle">…</div>
+    <div class="keys" id="keys">
+      <kbd>G</kbd> partida <kbd>O</kbd> observar <kbd>E</kbd> ejecutar brazo <kbd>Esc</kbd> parada
+      <kbd>F</kbd> girar vista <kbd>T</kbd> girar mapeo <kbd>R</kbd> reset <kbd>M</kbd> voz <kbd>S</kbd> ajustes
+    </div>
+  </footer>
+
+  <!-- Ajustes -->
+  <div class="drawer-backdrop" id="drawer-backdrop"></div>
+  <aside class="drawer" id="drawer" aria-label="Ajustes">
+    <div class="drawer-head">
+      <div class="drawer-title">AJUSTES</div>
+      <button class="icon-btn" id="btn-close-drawer" title="Cerrar (Esc)">
+        <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <div class="drawer-body">
+
+      <section class="set" id="set-difficulty">
+        <h3>Dificultad del robot</h3>
+        <p class="set-help">Se aplica a la siguiente jugada, incluso a mitad de partida.</p>
+        <div class="diff-grid" id="diff-grid"></div>
+      </section>
+
+      <section class="set">
+        <h3>Color del robot</h3>
+        <div class="seg" id="seg-side">
+          <button data-side="white">MAGNUS con blancas</button>
+          <button data-side="black">MAGNUS con negras</button>
+        </div>
+        <p class="set-help">Con blancas, MAGNUS abre la partida. Se aplica en la próxima partida.</p>
+      </section>
+
+      <section class="set">
+        <h3>Cámara y tablero</h3>
+        <div class="row">
+          <label for="in-camera">Índice de cámara</label>
+          <input id="in-camera" type="number" min="0" max="9" value="0">
+          <button class="btn btn-ghost" id="btn-camera-apply">Abrir</button>
+        </div>
+        <div class="row row-buttons">
+          <button class="btn btn-ghost" id="btn-reset">Reiniciar detección <kbd>R</kbd></button>
+          <button class="btn btn-ghost" id="btn-rotate">Girar mapeo 90° <kbd>T</kbd></button>
+          <button class="btn btn-ghost" id="btn-flip">Girar vista <kbd>F</kbd></button>
+        </div>
+        <p class="set-help" id="camera-help">Si el tablero digital sale rotado, gira el mapeo. Si mueves la cámara, reinicia la detección.</p>
+      </section>
+
+      <section class="set">
+        <h3>Voz</h3>
+        <label class="toggle"><input type="checkbox" id="tg-muted"><span class="toggle-ui"></span>Silenciar voz</label>
+        <label class="toggle"><input type="checkbox" id="tg-announce"><span class="toggle-ui"></span>Narrar también las jugadas del rival</label>
+        <div class="row">
+          <label for="in-idle">Recordatorio si el rival no mueve</label>
+          <input id="in-idle" type="range" min="0" max="120" step="5" value="45">
+          <span class="mono" id="in-idle-v">45 s</span>
+        </div>
+        <div class="row">
+          <input id="in-say" type="text" placeholder="Hacer que MAGNUS diga algo…" maxlength="160">
+          <button class="btn btn-ghost" id="btn-say">Decir</button>
+        </div>
+        <p class="set-help mono muted" id="voice-backend"></p>
+      </section>
+
+      <section class="set">
+        <h3>Brazo robótico</h3>
+        <div class="seg" id="seg-arm">
+          <button data-arm="off">Apagado</button>
+          <button data-arm="simulated">Simulado</button>
+          <button data-arm="cyberpi" id="seg-arm-cyberpi">CyberPi</button>
+        </div>
+        <p class="set-help" id="arm-help"></p>
+        <label class="toggle"><input type="checkbox" id="tg-arm-auto"><span class="toggle-ui"></span>Ejecutar las jugadas automáticamente (sin pulsar "Ejecutar")</label>
+        <div class="row">
+          <label for="in-arm-port">Puerto TCP de la CyberPi</label>
+          <input id="in-arm-port" type="number" min="1" max="65535" value="5555">
+        </div>
+        <div class="row">
+          <label for="in-positions">Tabla de posiciones</label>
+          <input id="in-positions" type="text" value="magnus/arm/positions.json">
+          <button class="btn btn-ghost" id="btn-arm-apply">Aplicar</button>
+        </div>
+        <div class="coverage">
+          <div class="coverage-bar"><div class="coverage-fill" id="coverage-fill"></div></div>
+          <div class="coverage-text mono" id="coverage-text"></div>
+          <div class="coverage-missing mono muted" id="coverage-missing"></div>
+        </div>
+      </section>
+
+      <section class="set">
+        <h3>Partida</h3>
+        <div class="row row-buttons">
+          <button class="btn btn-primary" id="btn-start-2">Iniciar partida <kbd>G</kbd></button>
+          <button class="btn btn-ghost" id="btn-stop">Detener partida <kbd>O</kbd></button>
+        </div>
+      </section>
+    </div>
+  </aside>
+
+  <!-- Fin de partida -->
+  <div class="modal" id="modal-over">
+    <div class="modal-card">
+      <div class="modal-kicker">FIN DE LA PARTIDA</div>
+      <div class="modal-title" id="over-title">—</div>
+      <div class="modal-sub" id="over-sub"></div>
+      <div class="modal-actions">
+        <button class="btn btn-primary" id="btn-new-game">Nueva partida</button>
+        <button class="btn btn-ghost" id="btn-over-close">Ver el tablero</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toasts" id="toasts"></div>
+  <div class="offline" id="offline">Reconectando con el robot…</div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
