@@ -1,0 +1,14 @@
+{
+  "difficulty": "BEGINNER",
+  "robot_side": "black",
+  "camera_index": 0,
+  "board_turns": 0,
+  "flip_view": true,
+  "voice_muted": false,
+  "announce_human_moves": false,
+  "idle_prompt_s": 45.0,
+  "arm_mode": "off",
+  "arm_auto_execute": false,
+  "arm_port": 5555,
+  "positions_path": "magnus/arm/positions.json"
+}
