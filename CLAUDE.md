@@ -171,9 +171,9 @@ sintéticas en `tests/test_vision_node.py`). Componentes:
 - `vision_node.py` — `BoardVisionNode` + backends de cámara (OpenCV/Fake)
 
 `ArUco_Test.py` (raíz) es el prototipo original, superado por
-`examples/run_vision_demo.py` (dashboard en vivo: modo OBSERVACION/PARTIDA,
-Stockfish opcional para mostrar la jugada que el robot va a jugar, y modo
-`--synthetic` para correr sin cámara). **Pendiente:** probar con la cámara y el
+`examples/run_vision_demo.py` (dashboard OpenCV para desarrollo) y, sobre
+todo, por **`play.py`** (la aplicación de juego con interfaz web, ver
+`magnus/app/`). **Pendiente:** probar con la cámara y el
 tablero físicos (los parámetros de detección pueden requerir ajuste con luz real).
 
 ### ✅ `magnus/voice/` — IMPLEMENTADO (falta elegir la voz definitiva)
@@ -208,16 +208,53 @@ jugar en fácil y aun así juzgar como un maestro.
 Pendiente: elegir la voz de oído con `examples/audition_voices.py` y ponerla en
 `config.VOICE_PIPER_MODEL`.
 
+### ✅ `magnus/app/` + `play.py` — LA APLICACIÓN DE JUEGO (interfaz web)
+
+`python3 play.py` es **el script final para jugar**: une los cuatro nodos y
+sirve un panel de control en el navegador (sin dependencias nuevas: servidor
+HTTP de la librería estándar + HTML/CSS/JS sin frameworks).
+
+- `session.py` — `GameSession`, `EngineWorker` (Stockfish en su hilo, con
+  cambio de dificultad en caliente), `SyntheticCamera` y utilidades puras.
+  **Es código compartido con `examples/run_vision_demo.py`**: si cambias la
+  lógica de partida, cámbiala aquí, no en el demo
+- `settings.py` — `AppSettings` (dataclass) ↔ `magnus_settings.json`. Campos
+  nuevos SIEMPRE con valor por defecto (los archivos viejos deben seguir cargando)
+- `arm_bridge.py` — `ArmSupervisor`: modos `off` / `simulated` / `cyberpi`,
+  conexión y ejecución en hilos propios, progreso por paso, `stop()`. El modo
+  `cyberpi` solo arranca si `inspect_positions_file()` dice que la tabla está
+  completa; si no, queda en `error` con un mensaje claro (nunca una excepción)
+- `controller.py` — `MagnusController`: el bucle de visión en un hilo,
+  **una cola de comandos** (los botones) que aplica ese mismo hilo, y un
+  `snapshot()` JSON con TODO el estado. `step()` es una iteración, testeable
+  sin hilos ni servidor
+- `server.py` — rutas: `/` (página), `/api/state`, `/api/events` (SSE),
+  `/api/command` (POST), `/stream/camera.mjpg`
+- `static/` — la interfaz. El tablero se dibuja en el navegador (SVG + piezas
+  animadas por diff de placement); la cámara llega como MJPEG
+
+Reglas del paquete:
+- ❌ **No** toques el estado de la partida desde el hilo HTTP: todo pasa por
+  `controller.command(nombre, params)` → cola → `_cmd_<nombre>()` en el hilo de visión
+- ❌ **No** añadas dependencias (ni pip ni CDN): la feria puede no tener internet
+- ✅ Cualquier dato nuevo para la pantalla va en `_publish_snapshot()` y se
+  consume en `static/app.js` (`render(s)`)
+- ✅ El brazo real se activa **sin tocar código**: `positions.json` completo +
+  elegir CyberPi en Ajustes. Mantén eso así
+
 ### 🔶 `magnus/arm/` — IMPLEMENTADO EN SOFTWARE; bloqueado por hardware
 
 Sigue el patrón de `magnus/engine/`:
 - `backend.py` — `ArmBackend` (ABC) + `FakeArmBackend` (tests/demos) +
-  `CyberPiBackend` (**stub**: lanza `NotImplementedError` hasta confirmar el
-  protocolo con CyberPi y el mecanismo de la garra)
+  `CyberPiBackend` (servidor TCP al que la CyberPi se conecta como cliente;
+  comandos de texto `MOVE`/`GRIPPER`/`ZERO`/`GET`/`STOP` con `ACK`)
 - `positions_table.py` — carga/consulta de `positions.json` (64 casillas +
   zonas `discard`/`exchange`); `make_fake_table()` con valores 9999.x para tests
 - `arm_node.py` — `ArmNode.plan()` (secuencia testeable sin hardware) y
-  `.execute()`; maneja captura, al paso, enroque y promoción
+  `.execute(resp, on_step=...)`; maneja captura, al paso, enroque y promoción
+- `positions_table.py` también ofrece `inspect_positions_file()` →
+  `PositionsReport` (cobertura "N de 66", faltantes, inválidas) **sin lanzar**;
+  es lo que la interfaz usa para decir si el brazo real se puede activar
 
 **Recuerda: NO calcula geometría. Solo busca en la tabla y reproduce.**
 
@@ -386,14 +423,23 @@ magnus/
 │   ├── phrases.py       # frases con variantes (no repetir)
 │   ├── commentary.py    # Δ centipeones -> "error grave" / "buena jugada"
 │   └── voice_node.py    # VoiceNode: cola + hilo (no bloquea la visión)
-└── arm/           # 🔶 software listo; CyberPiBackend y positions.json bloqueados por hardware
-    ├── __init__.py
-    ├── backend.py           # ArmBackend ABC + FakeArmBackend + CyberPiBackend (stub)
-    ├── positions_table.py   # carga/consulta de positions.json + make_fake_table()
-    └── arm_node.py          # MoveResponse → secuencia de sub-movimientos
-    (positions.json — NO existe: se graba calibrando el brazo real)
-examples/          # demos ejecutables (engine, brazo, visión, pipeline completo)
-tests/             # 240+ tests; todos corren sin hardware
+├── arm/           # 🔶 software listo; positions.json bloqueado por hardware
+│   ├── __init__.py
+│   ├── backend.py           # ArmBackend ABC + FakeArmBackend + CyberPiBackend (TCP)
+│   ├── positions_table.py   # carga/consulta de positions.json + inspect_positions_file()
+│   └── arm_node.py          # MoveResponse → secuencia de sub-movimientos
+│   (positions.json — NO existe: se graba calibrando el brazo real)
+└── app/           # ✅ la aplicación de juego (interfaz web)
+    ├── session.py       # GameSession + EngineWorker + SyntheticCamera (compartido con el demo)
+    ├── settings.py      # AppSettings <-> magnus_settings.json
+    ├── arm_bridge.py    # ArmSupervisor: off / simulated / cyberpi, hilos, progreso, parada
+    ├── controller.py    # MagnusController: bucle de visión + cola de comandos + snapshot
+    ├── server.py        # HTTP (stdlib): página, SSE de estado, MJPEG, comandos
+    ├── overlays.py      # dibujo sobre la imagen de la cámara
+    └── static/          # index.html + app.css + app.js (sin frameworks ni CDN)
+play.py            # ⭐ punto de entrada para jugar: python3 play.py [--synthetic]
+examples/          # demos ejecutables (engine, brazo, visión OpenCV, pipeline completo)
+tests/             # 320+ tests; todos corren sin hardware
 ```
 
 ---
