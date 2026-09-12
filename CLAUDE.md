@@ -70,8 +70,8 @@ código: `positions.json` se graba directamente en grados de motor.
 - **Comunicación Python ↔ CyberPi: CONFIRMADA — TCP sobre Wi-Fi.** El host
   abre un servidor (`CyberPiBackend`) y la CyberPi se conecta a él como
   cliente (así no hace falta descubrir la IP de la placa). El protocolo son
-  líneas de texto: `PING` / `HOME` / `ZERO` / `MOVE` / `GRIPPER` / `GET` /
-  `STOP`, cada una con su `ACK` o un `ERR <mensaje>`.
+  líneas de texto: `PING` / `HOME` / `LIMITS` / `ZERO` / `MOVE` / `GRIPPER` /
+  `GET` / `STOP`, cada una con su `ACK` o un `ERR <mensaje>`.
 - **Garra: CONFIRMADA.** El servo acerca el imán N52 a la pieza para agarrarla
   y lo aleja para soltarla. No es una pinza mecánica ni el eje vertical.
 - **Imán de agarre:** N52, 12×3 mm — muy fuerte. Su radio de influencia puede
@@ -95,6 +95,8 @@ Se hace en dos pasadas (rápida y lenta) para que repita a menos de 1°.
 
 - Orden: **primero el codo**, luego el hombro — así el brazo se recoge sobre sí
   mismo y no barre el tablero mientras busca.
+- El cero no se declara pegado al tope sino `HOME_ZERO_OFFSET_DEG` separado de
+  él, para que "ir a 0" no deje el motor forzando la transmisión.
 - `ZERO` sigue existiendo, pero **solo para calibrar a mano**. El cero de
   partida lo da `HOME`.
 - La app lo hace sola al conectar (ajuste `arm_auto_home`, activado por
@@ -106,6 +108,33 @@ Se hace en dos pasadas (rápida y lenta) para que repita a menos de 1°.
 Si algún día se monta un final de carrera o se usa el marcador ArUco 44 con la
 cámara como referencia, sustituye la detección del tope dentro de `HOME`: el
 resto del sistema no se entera.
+
+#### ⚠️ El signo del ángulo depende de hacia dónde busca su tope cada eje
+
+Como el cero queda junto al tope, **todo el recorrido útil está del lado
+CONTRARIO al sentido de búsqueda**. Un eje que busca su tope en sentido
+positivo solo admite ángulos **negativos**: mandarle `+30` lo empuja contra el
+tope. Es el error más fácil de cometer con este montaje.
+
+Estado calibrado del brazo real:
+
+| Eje | Busca su tope en | Ángulos válidos |
+|-----|------------------|-----------------|
+| Hombro (`EM1`) | negativo (`HOME_SHOULDER_SIGN = -1`) | de `0` a `+SHOULDER_TRAVEL_DEG` |
+| Codo (`EM2`)   | positivo (`HOME_ELBOW_SIGN = 1`)    | de `-ELBOW_TRAVEL_DEG` a `0` |
+
+Por eso los límites **no se escriben a mano**: `_limits_from_home()` los deriva
+del sentido de referenciado, así no pueden contradecirlo, y un movimiento hacia
+el tope se rechaza con `ERR` en vez de estrellar el brazo. Lo único que se mide
+a mano es el recorrido de cada eje (`*_TRAVEL_DEG`).
+
+El host los consulta con el comando `LIMITS` (`CyberPiBackend.get_limits()`,
+devuelve `None` con un cliente antiguo). `test_humo.py` lo usa para elegir el
+signo de cada eje solo.
+
+**Consecuencia para `positions.json`:** todos los valores de un mismo eje
+tendrán el mismo signo (hombro positivos, codo negativos). Si al calibrar sale
+un valor con el signo contrario, está mal medido.
 
 ### Si los motores "apenas se mueven"
 
@@ -296,9 +325,10 @@ Reglas del paquete:
 Sigue el patrón de `magnus/engine/`:
 - `backend.py` — `ArmBackend` (ABC) + `FakeArmBackend` (tests/demos) +
   `CyberPiBackend` (servidor TCP al que la CyberPi se conecta como cliente;
-  comandos de texto `HOME`/`MOVE`/`GRIPPER`/`ZERO`/`GET`/`STOP` con `ACK`).
-  `home()` referencia el brazo; `move_to()` registra los ángulos que la placa
-  alcanzó de verdad y avisa en el log si se quedó corto
+  comandos de texto `HOME`/`LIMITS`/`MOVE`/`GRIPPER`/`ZERO`/`GET`/`STOP` con
+  `ACK`). `home()` referencia el brazo; `get_limits()` pregunta el rango válido
+  de cada eje; `move_to()` registra los ángulos que la placa alcanzó de verdad
+  y avisa en el log si se quedó corto
 - `positions_table.py` — carga/consulta de `positions.json` (64 casillas +
   zonas `discard`/`exchange`); `make_fake_table()` con valores 9999.x para tests
 - `arm_node.py` — `ArmNode.plan()` (secuencia testeable sin hardware) y
@@ -315,8 +345,8 @@ CyberPi con mBlock en modo UPLOAD). Si lo editas en mBlock, copia el resultado
 de vuelta al repositorio.
 
 Pendiente (bloqueado por hardware):
-- Montar los topes físicos y calibrar los sentidos de búsqueda
-  (`HOME_SHOULDER_SIGN` / `HOME_ELBOW_SIGN` en el cliente)
+- Medir el recorrido real de cada eje y ajustar `SHOULDER_TRAVEL_DEG` /
+  `ELBOW_TRAVEL_DEG` (ahora son 300° provisionales, generosos de más)
 - Grabar `positions.json` real calibrando el brazo **desde el cero
   referenciado** (`examples/generate_positions_template.py` genera la plantilla)
 - Ajustar `BACKLASH_DEG` si el brazo no repite al llegar a un ángulo desde un
@@ -515,6 +545,7 @@ tests/             # 320+ tests; todos corren sin hardware
 - ❌ No asumir que Stockfish está instalado en los tests unitarios (usar FakeBackend)
 - ❌ No suponer que el hombro lleva reductor: **ningún eje lo lleva** (el 3:1 se descartó), grado de motor = grado de eslabón
 - ❌ No dar por bueno un cero puesto a mano: los encoders son incrementales, el cero de partida sale de `HOME` contra los topes
+- ❌ No suponer que los dos ejes aceptan ángulos positivos: el recorrido útil va del lado contrario al tope (hombro positivo, codo negativo) — consulta `LIMITS` en vez de adivinar
 - ❌ No inventar nombres de la API `EM_*` de mBlock — están aislados en las funciones `_hw_*` del cliente, con la advertencia de verificarlos en el autocompletado
 - ❌ No mezclar la lógica de detección de piezas, esquinas del tablero y marcador del brazo en una sola función — son tres responsabilidades distintas
 - ❌ No hablar (TTS) desde el bucle principal: sintetizar tarda ~1 s y congelaría la visión — todo va por la cola del `VoiceNode`

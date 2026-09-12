@@ -27,6 +27,12 @@ Entre cada paso PIDE CONFIRMACION (Enter) para que tu controles el ritmo.
 Los angulos son de MOTOR (encoder), absolutos, respecto del cero referenciado.
 Ambos ejes son de transmision directa: no hay reductor en ninguno, asi que un
 grado de motor es un grado de eslabon.
+
+⚠️ SIGNO DEL ANGULO DE PRUEBA: al referenciar, el cero queda junto al tope, y
+todo el recorrido util esta del lado CONTRARIO al sentido de busqueda. Un eje
+que busca su tope en positivo solo admite angulos NEGATIVOS. Este script
+pregunta sus limites a la placa (comando LIMITS) y elige el signo de cada eje
+solo, asi que no hay que acordarse de esto.
 """
 
 import argparse
@@ -81,10 +87,36 @@ def _diagnostico(nombre, pedido, logrado):
     return False
 
 
-def probar_eje(arm, nombre, shoulder, elbow, indice, angulo):
+def angulo_seguro(magnitud, limites, nombre):
+    """Elige el signo del angulo de prueba segun hacia donde puede moverse el eje.
+
+    ``limites`` es ``(lo, hi)`` tal como lo informa la placa, o ``None`` si el
+    cliente es anterior al comando LIMITS.
+    """
+    if limites is None:
+        print(f"   (la placa no informa limites del {nombre}: se usa +{magnitud}°;"
+              " si choca con el tope, prueba con --angulo negativo)")
+        return magnitud
+    lo, hi = limites
+    if lo <= magnitud <= hi:
+        return magnitud
+    if lo <= -magnitud <= hi:
+        print(f"   ({nombre}: su tope esta del lado positivo, se prueba con "
+              f"-{magnitud}°)")
+        return -magnitud
+    # El recorrido es menor que el angulo pedido: usar la mitad del rango.
+    elegido = round((lo + hi) / 2.0, 1)
+    print(f"   ({nombre}: {magnitud}° no cabe en [{lo}, {hi}], se prueba con "
+          f"{elegido}°)")
+    return elegido
+
+
+def probar_eje(arm, nombre, indice, angulo):
     """Manda un movimiento de un solo eje y mide lo que llego a moverse."""
-    paso(f"Mover el {nombre.upper()} a +{angulo}° (el otro eje se queda en 0)")
-    arm.move_to(shoulder=shoulder, elbow=elbow)
+    objetivo = [0.0, 0.0]
+    objetivo[indice] = angulo
+    paso(f"Mover el {nombre.upper()} a {angulo:+.1f}° (el otro eje se queda en 0)")
+    arm.move_to(shoulder=objetivo[0], elbow=objetivo[1])
     pos = arm.get_position()
     ok = _diagnostico(nombre, angulo, pos[indice])
 
@@ -130,26 +162,34 @@ def main():
         # 1. Fijar el origen.
         referenciar(arm, args.sin_topes)
 
-        # 2. Prueba de par de cada eje, por separado.
-        ok_codo = probar_eje(arm, "codo", shoulder=0.0, elbow=angulo,
-                             indice=1, angulo=angulo)
-        ok_hombro = probar_eje(arm, "hombro", shoulder=angulo, elbow=0.0,
-                               indice=0, angulo=angulo)
+        # 2. Preguntar a la placa hacia que lado puede moverse cada eje.
+        limites = arm.get_limits()
+        if limites is None:
+            lim_hombro = lim_codo = None
+        else:
+            lim_hombro, lim_codo = limites
+            print(f"   Limites de la placa: hombro {lim_hombro}, codo {lim_codo}")
+        ang_codo = angulo_seguro(angulo, lim_codo, "codo")
+        ang_hombro = angulo_seguro(angulo, lim_hombro, "hombro")
 
-        # 3. Repetibilidad del cero: lo que hace util al teach & playback.
+        # 3. Prueba de par de cada eje, por separado.
+        ok_codo = probar_eje(arm, "codo", indice=1, angulo=ang_codo)
+        ok_hombro = probar_eje(arm, "hombro", indice=0, angulo=ang_hombro)
+
+        # 4. Repetibilidad del cero: lo que hace util al teach & playback.
         if not args.sin_topes:
             paso("Comprobar la repetibilidad: referenciar otra vez y repetir "
                  "el mismo angulo")
             print("   Fijate donde queda la punta del brazo en el paso "
                   "siguiente:")
             arm.home()
-            arm.move_to(shoulder=angulo, elbow=0.0)
+            arm.move_to(shoulder=ang_hombro, elbow=0.0)
             print("   Si cae en el MISMO punto que antes, el cero es repetible")
             print("   y positions.json se puede grabar con confianza.")
             paso("Volver a 0°")
             arm.move_to(shoulder=0.0, elbow=0.0)
 
-        # 4. Garra, para cerrar la prueba completa.
+        # 5. Garra, para cerrar la prueba completa.
         paso("Probar la garra (acercar y alejar el iman)")
         arm.set_gripper(True)
         time.sleep(1.0)

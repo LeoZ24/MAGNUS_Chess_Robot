@@ -17,6 +17,7 @@
 #   PING                            ACK PONG
 #   HOME                            ACK HOME <hombro> <codo>
 #   ZERO                            ACK ZERO       (pose actual = 0,0)
+#   LIMITS                          ACK LIMITS <sh_lo> <sh_hi> <el_lo> <el_hi>
 #   MOVE <hombro> <codo>            ACK MOVE <hombro> <codo>  (logrados)
 #   GRIPPER <0|1>                   ACK GRIPPER    (1=acerca iman, 0=aleja iman)
 #   GET                             ACK POS <hombro> <codo>
@@ -66,9 +67,24 @@ MOVE_SETTLE_S       = 0.15    # dejar que el encoder se asiente entre pasadas
 BACKLASH_DEG  = 0.0
 APPROACH_SIGN = 1             # +1 = el tramo final siempre va en positivo
 
-# Limites de seguridad en grados de MOTOR (ajustar tras calibrar).
-SHOULDER_LIM = (-2000.0, 2000.0)
-ELBOW_LIM    = (-2000.0, 2000.0)
+# --- Limites de seguridad (grados de MOTOR) ---
+# ⚠️ REGLA QUE CUESTA UN BRAZO SI SE OLVIDA: al referenciar, el cero queda EN
+# el tope, asi que TODO el recorrido util esta del lado CONTRARIO al sentido
+# de busqueda. Si un eje busca su tope en sentido positivo, sus angulos validos
+# son NEGATIVOS, y mandarle +30 lo empuja contra el tope.
+#
+# Por eso los limites NO se escriben a mano: se derivan del sentido de
+# referenciado, para que no se puedan contradecir. Lo unico que hay que medir
+# es cuanto recorrido tiene cada eje desde su tope.
+SHOULDER_TRAVEL_DEG = 300.0   # recorrido util del hombro desde su tope
+ELBOW_TRAVEL_DEG    = 300.0   # recorrido util del codo desde su tope
+
+
+def _limits_from_home(home_sign, travel):
+    """Rango valido de un eje: del cero hacia el lado opuesto al tope."""
+    if home_sign < 0:            # busca en negativo -> se trabaja en positivo
+        return (0.0, travel)
+    return (-travel, 0.0)        # busca en positivo -> se trabaja en negativo
 
 # --- Referenciado automatico (HOME) ---
 # Los motores encoder NO tienen cero absoluto: el contador arranca en 0 alla
@@ -81,14 +97,22 @@ ELBOW_LIM    = (-2000.0, 2000.0)
 HOMING_ENABLED     = True
 HOME_POWER         = 30       # % de potencia de la pasada de busqueda
 HOME_POWER_FINE    = 18       # % de la segunda pasada (mas precisa y suave)
-HOME_SHOULDER_SIGN = -1       # sentido hacia el tope del hombro (calibrar)
-HOME_ELBOW_SIGN    = -1       # sentido hacia el tope del codo  (calibrar)
+HOME_SHOULDER_SIGN = -1       # sentido hacia el tope del hombro (calibrado)
+HOME_ELBOW_SIGN    = 1        # sentido hacia el tope del codo  (calibrado)
 HOME_SAMPLE_S      = 0.12     # periodo de muestreo del encoder
 HOME_STILL_N       = 3        # muestras quietas seguidas = tope tocado
 HOME_MIN_DELTA_DEG = 0.8      # menos que esto entre muestras = quieto
 HOME_START_GRACE_S = 1.0      # arranque: no declarar tope antes de esto
 HOME_BACKOFF_DEG   = 8.0      # separarse del tope entre las dos pasadas
 HOME_TIMEOUT_S     = 12.0     # por eje y por pasada
+# Tras tocar el tope, separarse esto y declarar el cero AHI. Asi la posicion 0
+# no deja el motor apoyado contra el tope forzando la transmision, y "volver a
+# 0" es una orden segura.
+HOME_ZERO_OFFSET_DEG = 5.0
+
+# Los limites se calculan cuando ya se conocen los sentidos de referenciado.
+SHOULDER_LIM = _limits_from_home(HOME_SHOULDER_SIGN, SHOULDER_TRAVEL_DEG)
+ELBOW_LIM    = _limits_from_home(HOME_ELBOW_SIGN, ELBOW_TRAVEL_DEG)
 
 # --- Garra: acerca/aleja el iman N52 ---
 # Calibrar estos dos angulos empiricamente:
@@ -139,7 +163,10 @@ def _log(text):
 def _clamp(v, lim, name):
     lo, hi = lim
     if v < lo or v > hi:
-        raise ValueError(name + " fuera de limites: " + str(v))
+        raise ValueError(
+            name + " fuera de limites: " + str(v) + " no esta en ["
+            + str(lo) + ", " + str(hi) + "]. Recuerda que el recorrido util va"
+            + " del lado contrario al tope.")
     return v
 
 
@@ -219,13 +246,21 @@ def _seek_stop(port, sign, power, name):
 
 
 def _home_axis(port, sign, name):
-    """Referencia un eje en dos pasadas y declara el cero en el tope."""
+    """Referencia un eje en dos pasadas y declara el cero cerca del tope.
+
+    El cero NO queda exactamente en el tope sino ``HOME_ZERO_OFFSET_DEG``
+    separado de el: asi la posicion 0 es una orden segura y no deja el motor
+    apoyado forzando la transmision.
+    """
     _log("home " + name + "...")
     _seek_stop(port, sign, HOME_POWER, name)          # pasada rapida
     _hw_turn(-sign * HOME_BACKOFF_DEG, MOVE_SPEED_FINE_RPM, port)
     time.sleep(MOVE_SETTLE_S)
     _seek_stop(port, sign, HOME_POWER_FINE, name)     # pasada lenta y precisa
     time.sleep(0.2)
+    # Separarse del tope ANTES de fijar el cero.
+    _hw_turn(-sign * HOME_ZERO_OFFSET_DEG, MOVE_SPEED_FINE_RPM, port)
+    time.sleep(MOVE_SETTLE_S)
     _hw_reset_angle(port)
     _log("  " + name + " cero fijado")
 
@@ -252,7 +287,15 @@ def handle(line):
         if not HOMING_ENABLED:
             return "ERR referenciado desactivado (HOMING_ENABLED=False)"
         _home_all()
-        return "ACK HOME 0.0 0.0"
+        sh = _hw_get_angle(SHOULDER_PORT)
+        el = _hw_get_angle(ELBOW_PORT)
+        return "ACK HOME " + str(sh) + " " + str(el)
+
+    if cmd == "LIMITS":
+        # Para que el host sepa hacia que lado puede mover cada eje sin
+        # tener que adivinar el sentido de referenciado.
+        return ("ACK LIMITS " + str(SHOULDER_LIM[0]) + " " + str(SHOULDER_LIM[1])
+                + " " + str(ELBOW_LIM[0]) + " " + str(ELBOW_LIM[1]))
 
     if cmd == "ZERO":
         _hw_reset_angle(SHOULDER_PORT)

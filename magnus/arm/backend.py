@@ -379,6 +379,35 @@ class CyberPiBackend(ArmBackend):
         """
         self._expect("ZERO", "ACK ZERO")
 
+    def get_limits(self) -> "tuple[tuple[float, float], tuple[float, float]] | None":
+        """Rango válido de cada eje: ``((sh_lo, sh_hi), (el_lo, el_hi))``.
+
+        Lo informa la CyberPi porque depende del sentido en que cada eje busca
+        su tope: al referenciar, el cero queda junto al tope, así que **todo el
+        recorrido útil está del lado contrario**.  Un eje que busca su tope en
+        sentido positivo solo admite ángulos negativos.
+
+        Devuelve ``None`` si el cliente de la placa es anterior a este comando:
+        conocer los límites es una ayuda, no un requisito para jugar.
+        """
+        try:
+            resp = self._command("LIMITS")
+        except ArmBackendError as exc:
+            # Un cliente anterior responde "ERR comando desconocido".
+            logger.info("La CyberPi no soporta LIMITS (%s); se sigue sin ellos.", exc)
+            return None
+        if not resp.startswith("ACK LIMITS"):
+            logger.info("La CyberPi no informa límites (%r); se sigue sin ellos.", resp)
+            return None
+        parts = resp.split()
+        if len(parts) != 6:
+            return None
+        try:
+            values = [float(p) for p in parts[2:]]
+        except ValueError:
+            return None
+        return (values[0], values[1]), (values[2], values[3])
+
     def get_position(self) -> tuple[float, float]:
         """Lee los ángulos actuales de motor (hombro, codo). Útil al calibrar."""
         resp = self._command("GET")

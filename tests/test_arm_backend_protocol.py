@@ -30,6 +30,7 @@ class FakeCyberPi:
             "GRIPPER": "ACK GRIPPER",
             "STOP": "ACK STOP",
             "GET": "ACK POS 1.5 -2.5",
+            "LIMITS": "ACK LIMITS 0.0 300.0 -300.0 0.0",
             **(replies or {}),
         }
         self._thread = threading.Thread(target=self._run, daemon=True)
@@ -195,3 +196,47 @@ def test_fake_backend_records_home():
 def test_fake_backend_home_needs_connection():
     with pytest.raises(ArmBackendError, match="no conectado"):
         FakeArmBackend().home()
+
+
+# ---------------------------------------------------------------------- #
+# LIMITS: al referenciar, el cero queda junto al tope, así que el recorrido
+# útil de cada eje está del lado contrario al sentido de búsqueda.  El host
+# no puede adivinarlo: se lo pregunta a la placa.
+# ---------------------------------------------------------------------- #
+
+def test_limits_parses_both_axes(link):
+    backend, cyber = link()
+    assert backend.get_limits() == ((0.0, 300.0), (-300.0, 0.0))
+    assert cyber.received[-1] == "LIMITS"
+
+
+def test_limits_signs_are_opposite_when_axes_home_opposite_ways(link):
+    """El hombro busca su tope en negativo y el codo en positivo: sus rangos
+    válidos quedan en lados opuestos, que es justo el caso del brazo real."""
+    backend, _ = link()
+    shoulder, elbow = backend.get_limits()
+    assert shoulder[0] <= 30.0 <= shoulder[1]        # el hombro admite +30
+    assert not (elbow[0] <= 30.0 <= elbow[1])        # el codo NO
+    assert elbow[0] <= -30.0 <= elbow[1]             # pero sí -30
+
+
+def test_limits_returns_none_on_an_older_client(link):
+    """Cliente anterior a LIMITS: responde ERR y el host sigue sin ellos."""
+    backend, _ = link({"LIMITS": "ERR comando desconocido: LIMITS"})
+    assert backend.get_limits() is None
+
+
+def test_limits_returns_none_when_the_answer_is_malformed(link):
+    backend, _ = link({"LIMITS": "ACK LIMITS 0.0 300.0"})
+    assert backend.get_limits() is None
+
+
+def test_limits_returns_none_when_the_values_are_not_numbers(link):
+    backend, _ = link({"LIMITS": "ACK LIMITS a b c d"})
+    assert backend.get_limits() is None
+
+
+def test_home_accepts_the_angles_the_board_reports(link):
+    """HOME devuelve la pose real tras referenciar, no un 0,0 inventado."""
+    backend, _ = link({"HOME": "ACK HOME 0.0 0.0"})
+    backend.home()
