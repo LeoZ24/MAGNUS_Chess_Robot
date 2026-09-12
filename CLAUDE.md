@@ -63,7 +63,10 @@ eslabón en los dos ejes, así que no hay ninguna conversión que hacer en el
 código: `positions.json` se graba directamente en grados de motor.
 
 - **Control:** CyberPi (placa del kit mBot2), con el cliente
-  `examples/cyberpi_arm_client.py` subido en modo UPLOAD desde mBlock
+  `examples/cyberpi_arm_client.py` subido en modo UPLOAD desde mBlock.
+  ⚠️ Ese archivo lleva `SSID`/`PASS`/`MAC_IP` como **marcadores**: el
+  repositorio es público, así que la clave real se escribe en mBlock antes de
+  subir a la placa y **nunca** se copia de vuelta al repositorio
 - **Comunicación Python ↔ CyberPi: CONFIRMADA — TCP sobre Wi-Fi.** El host
   abre un servidor (`CyberPiBackend`) y la CyberPi se conecta a él como
   cliente (así no hace falta descubrir la IP de la placa). El protocolo son

@@ -34,9 +34,12 @@ import usocket
 
 # ======================= CONFIGURACION =======================
 
-SSID   = "S24+ de Leo"     # hotspot del S24+ (2.4 GHz)
-PASS   = "FamiliaZannoni4"
-MAC_IP = "10.136.57.84"    # IP que imprime el CyberPiBackend al arrancar
+# ⚠️ ESTE ARCHIVO ESTA EN UN REPOSITORIO PUBLICO: no pongas aqui la clave de
+# verdad de tu red. Rellena estos tres valores EN MBLOCK, justo antes de subir
+# el programa a la placa, y deja los marcadores al copiar el archivo de vuelta.
+SSID   = "TU_RED_WIFI"       # hotspot de 2.4 GHz (la CyberPi no ve 5 GHz)
+PASS   = "TU_CLAVE_WIFI"     # NO la subas al repositorio
+MAC_IP = "0.0.0.0"           # IP que imprime el CyberPiBackend al arrancar
 PORT   = 5555
 
 # --- Hardware (confirmado) ---
