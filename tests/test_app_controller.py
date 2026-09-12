@@ -188,3 +188,53 @@ def test_threaded_start_and_shutdown(tmp_path):
         assert ctrl.seq >= 5
         jpeg, seq = ctrl.wait_for_jpeg(0, timeout=2.0)
         assert jpeg is not None and seq > 0
+
+
+def test_arm_home_command_references_the_arm(tmp_path):
+    """El botón "Referenciar" llega al brazo y avisa por evento al terminar."""
+    settings = AppSettings(arm_mode="simulated", arm_auto_execute=False)
+    ctrl = MagnusController(settings, synthetic=True,
+                            engine_factory=fake_engine_factory(),
+                            voice_enabled=False, arm_step_delay_s=0.0)
+    ctrl.start_without_thread()
+    try:
+        backend = ctrl.arm._node._backend
+        ctrl.command("arm_home")
+        assert _run(ctrl, 2000, until=lambda s: ("home",) in backend.commands,
+                    sleep=0.001)
+        texts = [e["text"] for e in ctrl.snapshot()["events"]]
+        assert any("eferenciad" in t for t in texts)
+    finally:
+        ctrl.shutdown()
+
+
+def test_arm_home_is_refused_while_the_arm_is_off(tmp_path):
+    settings = AppSettings(arm_mode="off")
+    ctrl = MagnusController(settings, synthetic=True,
+                            engine_factory=fake_engine_factory(),
+                            voice_enabled=False, arm_step_delay_s=0.0)
+    ctrl.start_without_thread()
+    try:
+        ctrl.command("arm_home")
+        _run(ctrl, 5)
+        texts = [e["text"] for e in ctrl.snapshot()["events"]]
+        assert any("apagado" in t for t in texts)
+    finally:
+        ctrl.shutdown()
+
+
+def test_set_arm_persists_auto_home(tmp_path):
+    path = tmp_path / "s.json"
+    settings = AppSettings(arm_mode="simulated")
+    ctrl = MagnusController(settings, synthetic=True, settings_path=str(path),
+                            engine_factory=fake_engine_factory(),
+                            voice_enabled=False, arm_step_delay_s=0.0)
+    ctrl.start_without_thread()
+    try:
+        ctrl.command("set_arm", {"auto_home": False})
+        _run(ctrl, 5)
+        assert ctrl.settings.arm_auto_home is False
+        assert ctrl.arm.auto_home is False
+        assert json.loads(path.read_text(encoding="utf-8"))["arm_auto_home"] is False
+    finally:
+        ctrl.shutdown()

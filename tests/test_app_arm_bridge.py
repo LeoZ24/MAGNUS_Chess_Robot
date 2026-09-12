@@ -155,8 +155,103 @@ def test_snapshot_is_thread_safe_under_execution():
     t = threading.Thread(target=reader)
     t.start()
     sup.execute(_resp())
-    _wait(lambda: sup.snapshot()["last_outcome"] == "done")
+    assert _wait(lambda: sup.snapshot()["last_outcome"] == "done")
+    # Esperar a que el lector LLEGUE A VER el estado final en vez de suponer
+    # que lo alcanzó a muestrear: pararlo antes era una carrera (el hilo podía
+    # quedarse en el paso 7 si el planificador no le daba turno a tiempo).
+    assert _wait(lambda: 8 in seen)
     stop.set()
     t.join()
     assert max(seen) == 8
+    sup.shutdown()
+
+
+# ---------------------------------------------------------------------- #
+# Referenciado (home): los motores encoder no tienen cero absoluto, así que
+# sin esto la tabla de posiciones apunta a un sitio distinto cada arranque.
+# ---------------------------------------------------------------------- #
+
+def test_cyberpi_homes_automatically_before_becoming_ready(tmp_path):
+    path = tmp_path / "positions.json"
+    _complete_table(path)
+    fake = FakeArmBackend()
+    sup = ArmSupervisor(mode="cyberpi", positions_path=str(path),
+                        backend_factory=lambda port: fake)
+    assert _wait(lambda: sup.is_ready)
+    # El referenciado ocurre DESPUÉS de conectar y ANTES de cualquier jugada.
+    assert fake.commands[:2] == [("connect",), ("home",)]
+    sup.shutdown()
+
+
+def test_auto_home_can_be_turned_off(tmp_path):
+    path = tmp_path / "positions.json"
+    _complete_table(path)
+    fake = FakeArmBackend()
+    sup = ArmSupervisor(mode="cyberpi", positions_path=str(path), auto_home=False,
+                        backend_factory=lambda port: fake)
+    assert _wait(lambda: sup.is_ready)
+    assert ("home",) not in fake.commands
+    assert sup.auto_home is False
+    sup.shutdown()
+
+
+def test_failed_homing_marks_error_and_never_becomes_ready(tmp_path):
+    path = tmp_path / "positions.json"
+    _complete_table(path)
+
+    class NoStop(FakeArmBackend):
+        def home(self):
+            raise ArmBackendError("no encontre el tope del codo")
+
+    sup = ArmSupervisor(mode="cyberpi", positions_path=str(path),
+                        backend_factory=lambda port: NoStop())
+    assert _wait(lambda: sup.status == "error")
+    assert not sup.is_ready                  # jugar sin cero fiable: nunca
+    assert "no encontre el tope del codo" in sup.snapshot()["error"]
+    sup.shutdown()
+
+
+def test_manual_home_reports_progress_and_returns_to_ready():
+    sup = ArmSupervisor(mode="simulated", step_delay_s=0.0)
+    assert sup.snapshot()["can_home"] is True
+    done = []
+    assert sup.home(on_done=lambda ok, err: done.append((ok, err)))
+    assert _wait(lambda: done) and done == [(True, None)]
+    assert _wait(lambda: sup.is_ready)
+    sup.shutdown()
+
+
+def test_manual_home_failure_marks_error():
+    class NoStop(FakeArmBackend):
+        def home(self):
+            raise ArmBackendError("tope no encontrado")
+
+    sup = ArmSupervisor(mode="simulated", step_delay_s=0.0)
+    sup._node._backend = NoStop()            # el simulado no falla nunca solo
+    sup._node._backend.connect()
+    done = []
+    assert sup.home(on_done=lambda ok, err: done.append(ok))
+    assert _wait(lambda: done) and done == [False]
+    assert _wait(lambda: sup.status == "error")
+    sup.shutdown()
+
+
+def test_cannot_home_while_off_or_busy():
+    off = ArmSupervisor(mode="off")
+    assert off.snapshot()["can_home"] is False
+    assert off.home() is False
+    off.shutdown()
+
+    sup = ArmSupervisor(mode="simulated", step_delay_s=0.05)
+    assert sup.execute(_resp())
+    assert _wait(lambda: sup.is_busy)
+    assert sup.home() is False               # nunca a mitad de una jugada
+    sup.shutdown()
+
+
+def test_configure_can_change_auto_home_without_changing_mode():
+    sup = ArmSupervisor(mode="simulated", step_delay_s=0.0, auto_home=True)
+    sup.configure(auto_home=False)
+    assert sup.auto_home is False
+    assert sup.snapshot()["auto_home"] is False
     sup.shutdown()

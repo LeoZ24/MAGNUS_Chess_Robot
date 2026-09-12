@@ -1,28 +1,35 @@
-"""
-test_humo_motores.py — Prueba de humo QUE MUEVE LOS MOTORES del brazo.
+"""test_humo.py — Prueba de humo y DIAGNOSTICO de los motores del brazo.
 =====================================================================
-A diferencia de test_humo.py (que solo movía la garra), este mueve el
-HOMBRO y el CODO a grados especificos. Por eso es mas riesgoso: usalo con
-el brazo LIBRE de obstaculos y listo para apagar el shield si algo va mal.
+Mueve el HOMBRO y el CODO a angulos concretos y mide cuanto se movieron de
+verdad. Por eso es mas riesgoso que probar solo la garra: usalo con el brazo
+LIBRE de obstaculos y listo para apagar el shield si algo va mal.
 
 COMO CORRERLO (desde VSCode):
     1. Enciende el shield (interruptor ON) con cyberpi_arm_client.py subido.
-    2. Coloca este archivo en la RAIZ del proyecto MAGNUS.
-    3. Despeja el espacio alrededor del brazo (sin piezas ni tablero cerca).
-    4. Ten la mano cerca del interruptor del shield por si acaso.
-    5. python3 test_humo_motores.py
+    2. Despeja el espacio alrededor del brazo (sin piezas ni tablero cerca).
+    3. Ten la mano cerca del interruptor del shield por si acaso.
+    4. python3 test_humo.py                (con topes montados: referencia solo)
+       python3 test_humo.py --sin-topes    (sin topes: pide fijar el cero a mano)
 
-QUE HACE (movimientos PEQUENOS y LENTOS a proposito):
-    - Fija la pose actual como origen (0,0) con ZERO.
-    - Mueve el codo a +15 grados, luego regresa a 0.
-    - Mueve el hombro a +15 grados, luego regresa a 0.
-    - Entre cada paso PIDE CONFIRMACION (Enter) para que tu controles el ritmo.
+QUE HACE:
+    0. Conecta y saluda (PING).
+    1. Referencia el brazo (HOME): busca los topes y fija ahi el cero.
+       Con --sin-topes vuelve al metodo viejo: colocar el brazo y pulsar Enter.
+    2. Prueba de par por eje: manda un angulo y COMPARA con lo que llego a
+       moverse. Si el error es grande, imprime el diagnostico probable en vez
+       de dejarte adivinando.
+    3. Repetibilidad del cero: referencia otra vez y repite el mismo angulo
+       para que compruebes a ojo si el brazo cae en el mismo sitio.
+    4. Garra.
 
-Los angulos son de MOTOR (encoder), absolutos, relativos al origen que fijaste.
-15 grados es un movimiento chico y seguro para una primera prueba. Cuando
-confies, sube ANGULO_PRUEBA.
+Entre cada paso PIDE CONFIRMACION (Enter) para que tu controles el ritmo.
+
+Los angulos son de MOTOR (encoder), absolutos, respecto del cero referenciado.
+Ambos ejes son de transmision directa: no hay reductor en ninguno, asi que un
+grado de motor es un grado de eslabon.
 """
 
+import argparse
 import logging
 import time
 
@@ -33,8 +40,10 @@ logging.basicConfig(
 )
 
 from magnus.arm import CyberPiBackend
+from magnus.arm.backend import ArmBackendError
 
-ANGULO_PRUEBA = 30.0    # grados de motor; chico y seguro para empezar
+ANGULO_PRUEBA = 30.0    # grados de motor
+ERROR_OK_DEG = 2.0      # error por debajo del cual damos el eje por bueno
 
 
 def paso(descripcion):
@@ -42,7 +51,75 @@ def paso(descripcion):
     input(f"\n>> {descripcion}\n   Presiona Enter para ejecutar (Ctrl+C aborta)... ")
 
 
+def _diagnostico(nombre, pedido, logrado):
+    """Explica por que un eje no llego, en vez de dejar el error crudo."""
+    error = pedido - logrado
+    recorrido = abs(logrado)
+    print(f"   {nombre}: pedido {pedido:+.1f}°, logrado {logrado:+.1f}°, "
+          f"error {error:+.1f}°")
+    if abs(error) <= ERROR_OK_DEG:
+        print(f"   OK: el {nombre} llego a donde se le pidio.")
+        return True
+    if recorrido < abs(pedido) * 0.25:
+        print(f"   FALLO: el {nombre} apenas se movio. Causas por orden de "
+              "probabilidad:")
+        print("     1. Bateria del shield baja (los motores NO se alimentan "
+              "del USB).")
+        print("     2. MOVE_SPEED_RPM demasiado bajo en el cliente CyberPi: a "
+              "pocas RPM")
+        print("        el control interno no aplica par suficiente. Sube a "
+              "60-80.")
+        print("     3. Tope mecanico o cable tirando en ese sentido.")
+    else:
+        print(f"   PARCIAL: el {nombre} se quedo corto. Suele ser par justo: "
+              "sube")
+        print("     MOVE_SPEED_RPM o MOVE_MAX_PASSES en el cliente CyberPi.")
+    print("   OJO: si el ENCODER marca el angulo correcto pero el brazo casi "
+          "no se mueve,")
+    print("   el problema no es electrico sino de transmision (revisa que el "
+          "eje no patine).")
+    return False
+
+
+def probar_eje(arm, nombre, shoulder, elbow, indice, angulo):
+    """Manda un movimiento de un solo eje y mide lo que llego a moverse."""
+    paso(f"Mover el {nombre.upper()} a +{angulo}° (el otro eje se queda en 0)")
+    arm.move_to(shoulder=shoulder, elbow=elbow)
+    pos = arm.get_position()
+    ok = _diagnostico(nombre, angulo, pos[indice])
+
+    paso(f"Regresar el {nombre.upper()} a 0°")
+    arm.move_to(shoulder=0.0, elbow=0.0)
+    pos = arm.get_position()
+    print(f"   De vuelta en hombro={pos[0]:.2f}  codo={pos[1]:.2f}")
+    return ok
+
+
+def referenciar(arm, sin_topes):
+    """Fija el cero: automatico contra los topes, o a mano si no los hay."""
+    if sin_topes:
+        print("\n--- Cero MANUAL (--sin-topes) ---")
+        print("Recuerda: colocar el brazo a ojo NO es repetible. Cada partida")
+        print("empezara con un cero distinto y la tabla de posiciones apuntara")
+        print("a un sitio distinto. Monta los topes en cuanto puedas.")
+        input(">> Pon el brazo en su pose de reposo y Enter para fijar el cero... ")
+        arm.zero_here()
+    else:
+        paso("Referenciar el brazo (HOME): buscara los topes empujando despacio")
+        arm.home()
+    sh, el = arm.get_position()
+    print(f"   Cero fijado. Ahora hombro={sh:.2f}  codo={el:.2f}")
+
+
 def main():
+    parser = argparse.ArgumentParser(description="Prueba de humo de los motores")
+    parser.add_argument("--sin-topes", action="store_true",
+                        help="fijar el cero a mano (sin referenciado automatico)")
+    parser.add_argument("--angulo", type=float, default=ANGULO_PRUEBA,
+                        help=f"angulo de prueba en grados de motor (def. {ANGULO_PRUEBA})")
+    args = parser.parse_args()
+    angulo = args.angulo
+
     print("\n--- Test de humo CON MOTORES ---")
     print("Despeja el espacio alrededor del brazo antes de continuar.")
     print("Manten la mano cerca del interruptor del shield.\n")
@@ -50,35 +127,27 @@ def main():
 
     with CyberPiBackend() as arm:
 
-        # 1. Fijar el origen en la pose actual.
-        input(">> Pon el brazo en una pose comoda de reposo y Enter "
-              "para fijar el cero... ")
-        arm.zero_here()
-        sh, el = arm.get_position()
-        print(f"   Origen fijado. Ahora hombro={sh:.2f}  codo={el:.2f}\n")
+        # 1. Fijar el origen.
+        referenciar(arm, args.sin_topes)
 
-        # 2. CODO: ir a +15, volver a 0.
-        paso(f"Mover el CODO a +{ANGULO_PRUEBA}° (el hombro se queda en 0)")
-        arm.move_to(shoulder=0.0, elbow=ANGULO_PRUEBA)
-        sh, el = arm.get_position()
-        print(f"   Ejecutado. Posicion: hombro={sh:.2f}  codo={el:.2f}")
+        # 2. Prueba de par de cada eje, por separado.
+        ok_codo = probar_eje(arm, "codo", shoulder=0.0, elbow=angulo,
+                             indice=1, angulo=angulo)
+        ok_hombro = probar_eje(arm, "hombro", shoulder=angulo, elbow=0.0,
+                               indice=0, angulo=angulo)
 
-        paso("Regresar el CODO a 0°")
-        arm.move_to(shoulder=0.0, elbow=0.0)
-        sh, el = arm.get_position()
-        print(f"   Ejecutado. Posicion: hombro={sh:.2f}  codo={el:.2f}")
-
-        # 3. HOMBRO: ir a +15, volver a 0.
-        #    (El hombro tiene reductor 3:1; puede moverse mas despacio.)
-        paso(f"Mover el HOMBRO a +{ANGULO_PRUEBA}° (el codo se queda en 0)")
-        arm.move_to(shoulder=ANGULO_PRUEBA, elbow=0.0)
-        sh, el = arm.get_position()
-        print(f"   Ejecutado. Posicion: hombro={sh:.2f}  codo={el:.2f}")
-
-        paso("Regresar el HOMBRO a 0°")
-        arm.move_to(shoulder=0.0, elbow=0.0)
-        sh, el = arm.get_position()
-        print(f"   Ejecutado. Posicion: hombro={sh:.2f}  codo={el:.2f}")
+        # 3. Repetibilidad del cero: lo que hace util al teach & playback.
+        if not args.sin_topes:
+            paso("Comprobar la repetibilidad: referenciar otra vez y repetir "
+                 "el mismo angulo")
+            print("   Fijate donde queda la punta del brazo en el paso "
+                  "siguiente:")
+            arm.home()
+            arm.move_to(shoulder=angulo, elbow=0.0)
+            print("   Si cae en el MISMO punto que antes, el cero es repetible")
+            print("   y positions.json se puede grabar con confianza.")
+            paso("Volver a 0°")
+            arm.move_to(shoulder=0.0, elbow=0.0)
 
         # 4. Garra, para cerrar la prueba completa.
         paso("Probar la garra (acercar y alejar el iman)")
@@ -86,8 +155,14 @@ def main():
         time.sleep(1.0)
         arm.set_gripper(False)
 
-        print("\n=== TEST DE HUMO CON MOTORES OK ===")
-        print("Hombro, codo y garra respondieron. La cadena de control funciona.")
+        if ok_codo and ok_hombro:
+            print("\n=== TEST DE HUMO CON MOTORES OK ===")
+            print("Hombro, codo y garra llegaron a donde se les pidio.")
+        else:
+            print("\n=== TEST DE HUMO CON AVISOS ===")
+            print("Algun eje no llego. Revisa el diagnostico de arriba antes")
+            print("de grabar positions.json: una tabla medida con un eje que")
+            print("se queda corto no sirve de nada.")
 
     print("Conexion cerrada limpiamente.\n")
 
@@ -98,3 +173,5 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\n\nAbortado por el usuario (Ctrl+C). "
               "Apaga el shield si el brazo quedo en mala posicion.")
+    except ArmBackendError as exc:
+        print(f"\n\nFallo del brazo: {exc}")

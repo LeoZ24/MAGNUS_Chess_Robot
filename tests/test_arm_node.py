@@ -133,3 +133,19 @@ def test_plan_fails_fast_if_zone_missing():
     with pytest.raises(Exception):
         arm.plan(resp)
     assert backend.commands == []  # no se envió ningún comando
+
+
+def test_home_delegates_to_the_backend():
+    """El nodo no calcula nada: solo pide la referencia al backend."""
+    backend = FakeArmBackend()
+    arm = ArmNode(backend=backend, table=make_fake_table())
+    arm.start()
+    arm.home()
+    assert ("home",) in backend.commands
+
+
+def test_home_connects_first_if_needed():
+    backend = FakeArmBackend()
+    arm = ArmNode(backend=backend, table=make_fake_table())
+    arm.home()                       # sin start() previo
+    assert backend.commands == [("connect",), ("home",)]

@@ -109,6 +109,18 @@ class ArmNode:
             self._started = False
             logger.info("ArmNode detenido.")
 
+    def home(self) -> None:
+        """Referencia el brazo (el backend lleva el cero a su tope físico).
+
+        Los ángulos de la tabla son absolutos, así que solo significan algo si
+        el cero es el mismo en todas las partidas.  Esto no es geometría: el
+        nodo solo pide la referencia, el backend la ejecuta.
+        """
+        if not self._started:
+            self.start()
+        self._backend.home()
+        logger.info("ArmNode referenciado.")
+
     def __enter__(self) -> "ArmNode":
         return self.start()
 

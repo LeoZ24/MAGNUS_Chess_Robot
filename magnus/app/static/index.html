@@ -190,6 +190,7 @@
         <ol class="arm-steps" id="arm-steps"></ol>
         <div class="arm-actions">
           <button class="btn btn-primary" id="btn-arm-execute" hidden>▶ Ejecutar jugada</button>
+          <button class="btn btn-ghost" id="btn-arm-home" hidden>⌖ Referenciar</button>
           <button class="btn btn-danger" id="btn-arm-stop" hidden>■ PARADA</button>
         </div>
         <div class="arm-coverage mono" id="arm-coverage"></div>
@@ -275,6 +276,7 @@
         </div>
         <p class="set-help" id="arm-help"></p>
         <label class="toggle"><input type="checkbox" id="tg-arm-auto"><span class="toggle-ui"></span>Ejecutar las jugadas automáticamente (sin pulsar "Ejecutar")</label>
+        <label class="toggle"><input type="checkbox" id="tg-arm-home"><span class="toggle-ui"></span>Referenciar el brazo al conectar (busca sus topes y fija el cero)</label>
         <div class="row">
           <label for="in-arm-port">Puerto TCP de la CyberPi</label>
           <input id="in-arm-port" type="number" min="1" max="65535" value="5555">

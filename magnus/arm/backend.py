@@ -19,6 +19,26 @@ from abc import ABC, abstractmethod
 
 logger = logging.getLogger("magnus.arm.backend")
 
+# Error (en grados de motor) a partir del cual se avisa de que el brazo no
+# llegó a donde se le pidió.  El cliente de la CyberPi ya reintenta por su
+# cuenta; esto solo deja rastro en el log para poder diagnosticarlo.
+MOVE_WARN_DEG: float = 2.0
+
+
+def _parse_pair(resp: str, prefix_words: int) -> "tuple[float, float] | None":
+    """Extrae los dos números que siguen a las primeras ``prefix_words``.
+
+    Devuelve ``None`` si no vienen o no son números: los ángulos son
+    información de diagnóstico, nunca un motivo para tumbar una jugada.
+    """
+    parts = resp.split()
+    if len(parts) < prefix_words + 2:
+        return None
+    try:
+        return float(parts[prefix_words]), float(parts[prefix_words + 1])
+    except ValueError:
+        return None
+
 
 class ArmBackendError(Exception):
     """Error de comunicación o ejecución en el backend del brazo."""
@@ -47,6 +67,19 @@ class ArmBackend(ABC):
     def set_gripper(self, engaged: bool) -> None:
         """Activa (agarrar) o desactiva (soltar) la garra (servo 3)."""
 
+    def home(self) -> None:
+        """Lleva el brazo a su referencia física y declara ahí el cero.
+
+        Los motores encoder del kit mBot2 son **incrementales**: no tienen cero
+        absoluto, el contador arranca en 0 dondequiera que esté el brazo al
+        encender.  Sin una referencia física, la misma entrada de
+        ``positions.json`` apunta a un sitio distinto en cada partida.
+
+        Por defecto no hace nada: un backend falso (o uno que no tenga
+        referencia) simplemente no tiene qué referenciar.  Los backends reales
+        lo sobrescriben.
+        """
+
     # Azúcar para usarlo como context manager.
     def __enter__(self) -> "ArmBackend":
         self.connect()
@@ -64,6 +97,7 @@ class FakeArmBackend(ArmBackend):
         ("connect",) / ("disconnect",)
         ("move_to", shoulder, elbow)
         ("gripper", True|False)
+        ("home",)
     """
 
     def __init__(self):
@@ -89,6 +123,11 @@ class FakeArmBackend(ArmBackend):
         if not self.connected:
             raise ArmBackendError("Backend no conectado (llama a connect()).")
         self.commands.append(("gripper", engaged))
+
+    def home(self) -> None:
+        if not self.connected:
+            raise ArmBackendError("Backend no conectado (llama a connect()).")
+        self.commands.append(("home",))
 
     def clear(self) -> None:
         """Limpia el registro de comandos (útil entre casos de test)."""
@@ -126,6 +165,7 @@ class CyberPiBackend(ArmBackend):
         *,
         accept_timeout: float = 90.0,
         command_timeout: float = 20.0,
+        home_timeout: float = 75.0,
     ):
         """
         Parámetros:
@@ -134,15 +174,20 @@ class CyberPiBackend(ArmBackend):
             accept_timeout: segundos a esperar a que la CyberPi se conecte.
             command_timeout: segundos máximos a esperar el ACK de un comando.
                 Debe ser mayor que el movimiento físico más lento del brazo.
+            home_timeout: segundos máximos para el referenciado.  Es aparte
+                porque ``HOME`` busca dos topes con dos pasadas cada uno y
+                tarda bastante más que un movimiento normal.
         """
         self.bind_host = bind_host
         self.port = port
         self.accept_timeout = accept_timeout
         self.command_timeout = command_timeout
+        self.home_timeout = home_timeout
 
         self._server: socket.socket | None = None
         self._conn: socket.socket | None = None
         self._rx_buffer: bytes = b""
+        self._last_reached: tuple[float, float] | None = None
 
     # ------------------------------------------------------------------ #
     # Descubrir la IP local (solo para mostrarla en el log)
@@ -262,7 +307,34 @@ class CyberPiBackend(ArmBackend):
     def move_to(self, shoulder: float, elbow: float) -> None:
         # Formato con 2 decimales: suficiente para grados de motor, evita
         # notación científica que confundiría al parser del cliente.
-        self._expect(f"MOVE {shoulder:.2f} {elbow:.2f}", "ACK MOVE")
+        resp = self._command(f"MOVE {shoulder:.2f} {elbow:.2f}")
+        if not resp.startswith("ACK MOVE"):
+            raise ArmBackendError(
+                f"Respuesta inesperada a MOVE: {resp!r} (esperaba 'ACK MOVE')"
+            )
+        # El cliente nuevo devuelve además los ángulos que logró de verdad
+        # ("ACK MOVE <hombro> <codo>").  Se registran para poder ver en el log
+        # si el brazo se queda corto; el cliente antiguo no los manda y
+        # entonces no hay nada que registrar.
+        self._last_reached = _parse_pair(resp, prefix_words=2)
+        if self._last_reached is not None:
+            got_sh, got_el = self._last_reached
+            err_sh, err_el = shoulder - got_sh, elbow - got_el
+            if abs(err_sh) > MOVE_WARN_DEG or abs(err_el) > MOVE_WARN_DEG:
+                logger.warning(
+                    "El brazo se quedó corto: pedido (%.2f, %.2f), logrado "
+                    "(%.2f, %.2f), error (%.2f, %.2f).",
+                    shoulder, elbow, got_sh, got_el, err_sh, err_el,
+                )
+
+    @property
+    def last_reached(self) -> "tuple[float, float] | None":
+        """Ángulos realmente alcanzados en el último ``move_to`` (o ``None``).
+
+        ``None`` si el cliente de la CyberPi no los informa (versión antigua
+        del protocolo) o si todavía no se ha movido nada.
+        """
+        return self._last_reached
 
     def set_gripper(self, engaged: bool) -> None:
         self._expect(f"GRIPPER {1 if engaged else 0}", "ACK GRIPPER")
@@ -270,8 +342,41 @@ class CyberPiBackend(ArmBackend):
     # ------------------------------------------------------------------ #
     # Extras útiles (no forman parte del contrato, pero ayudan a calibrar)
     # ------------------------------------------------------------------ #
+    def home(self) -> None:
+        """Referencia el brazo contra sus topes físicos y fija ahí el cero.
+
+        El movimiento lo hace la CyberPi (comando ``HOME``): busca el tope de
+        cada eje empujando despacio y detectando que el encoder deja de
+        cambiar, y declara el cero en ese punto.  Así ``positions.json``
+        significa lo mismo en todas las partidas sin que nadie coloque el
+        brazo a mano.
+
+        Tarda bastante más que un movimiento normal, así que usa
+        ``home_timeout`` en vez de ``command_timeout``.
+        """
+        if self._conn is None:
+            raise ArmBackendError("Backend no conectado (llama a connect()).")
+        previous = self.command_timeout
+        self._conn.settimeout(self.home_timeout)
+        self.command_timeout = self.home_timeout
+        try:
+            resp = self._command("HOME")
+        finally:
+            self.command_timeout = previous
+            if self._conn is not None:
+                self._conn.settimeout(previous)
+        if not resp.startswith("ACK HOME"):
+            raise ArmBackendError(
+                f"Respuesta inesperada a HOME: {resp!r} (esperaba 'ACK HOME')"
+            )
+        logger.info("Brazo referenciado (cero en los topes físicos).")
+
     def zero_here(self) -> None:
-        """Define la pose actual del brazo como el origen (0,0)."""
+        """Define la pose actual del brazo como el origen (0,0).
+
+        Solo para calibrar a mano: el cero repetible entre partidas lo da
+        :meth:`home`, no esto.
+        """
         self._expect("ZERO", "ACK ZERO")
 
     def get_position(self) -> tuple[float, float]:
