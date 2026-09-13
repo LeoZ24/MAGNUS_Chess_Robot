@@ -120,6 +120,10 @@ GRIPPER_ENGAGE_ANGLE  = 90    # iman CERCA de la pieza (la agarra)
 GRIPPER_RELEASE_ANGLE = 0     # iman LEJOS de la pieza (la suelta)
 GRIPPER_SETTLE_S      = 0.4   # tiempo para que el servo llegue
 
+# Segundos que se espera al hotspot antes de rendirse y reintentar. Sin este
+# limite la placa se cuelga esperando Wi-Fi y cuesta subirle un programa nuevo.
+WIFI_TIMEOUT_S = 20
+
 # Poner en False para dejar de imprimir el detalle de cada movimiento en la
 # pantalla de la CyberPi una vez que el brazo este afinado.
 VERBOSE = True
@@ -334,13 +338,26 @@ def handle(line):
 # ======================= RED =======================
 
 def conectar_wifi():
+    """Conecta al hotspot. Devuelve True si lo consiguio, False si no.
+
+    ⚠️ CON TIEMPO LIMITE A PROPOSITO. Un bucle "hasta que conecte" sin salida
+    deja la placa colgada si el hotspot no esta encendido, y entonces cuesta
+    que mBlock recupere el puerto para subir un programa nuevo. Mejor rendirse,
+    avisar en pantalla y reintentar desde el bucle principal.
+    """
     cyberpi.console.println("WiFi: " + SSID)
     cyberpi.led.on("yellow")
     cyberpi.wifi.connect(SSID, PASS)
+    t0 = time.time()
     while not cyberpi.wifi.is_connect():
+        if time.time() - t0 > WIFI_TIMEOUT_S:
+            cyberpi.console.println("Sin WiFi, reintento")
+            cyberpi.led.on("red")
+            return False
         time.sleep(0.5)
     cyberpi.console.println("WiFi OK")
     time.sleep(3)   # dar tiempo a DHCP
+    return True
 
 def sesion():
     """Una conexion al host. Vuelve cuando se cae, para reintentar."""
@@ -382,12 +399,15 @@ def sesion():
 
 cyberpi.console.clear()
 cyberpi.console.println("MAGNUS arm client")
-conectar_wifi()
 
+# El Wi-Fi se reintenta DENTRO del bucle: asi la placa nunca se queda
+# atascada antes de llegar a un punto donde se la puede interrumpir.
 while True:
     try:
-        sesion()
+        if cyberpi.wifi.is_connect() or conectar_wifi():
+            sesion()
     except Exception as e:
         cyberpi.console.println("Sin host, reintento")
         cyberpi.led.on("red")
-    time.sleep(2)   # esperar antes de reintentar
+    _hw_stop()          # que un fallo de red nunca deje un motor empujando
+    time.sleep(2)       # esperar antes de reintentar

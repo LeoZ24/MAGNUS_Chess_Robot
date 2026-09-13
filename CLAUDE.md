@@ -344,6 +344,14 @@ El cliente que corre en la placa está versionado en
 CyberPi con mBlock en modo UPLOAD). Si lo editas en mBlock, copia el resultado
 de vuelta al repositorio.
 
+**Si la subida desde mBlock se queda colgada en 1 %**, no es el código: esa
+fase ya pasó ("processing code completed"). Es que algo más tiene tomado el
+puerto o la placa está ocupada. Por orden: parar el programa en marcha (botón
+rojo), cerrar el monitor serie si está abierto, apagar y encender la placa, y
+probar otro cable USB. Por eso el cliente **nunca** usa bucles de espera sin
+límite de tiempo: una placa colgada es una placa a la que cuesta subirle un
+programa nuevo.
+
 Pendiente (bloqueado por hardware):
 - Medir el recorrido real de cada eje y ajustar `SHOULDER_TRAVEL_DEG` /
   `ELBOW_TRAVEL_DEG` (ahora son 300° provisionales, generosos de más)
