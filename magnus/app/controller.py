@@ -197,6 +197,7 @@ class MagnusController:
                 mode=self.settings.arm_mode,
                 positions_path=self.settings.positions_path,
                 port=self.settings.arm_port,
+                auto_home=self.settings.arm_auto_home,
                 **kwargs,
             )
         self._started = True
@@ -221,6 +222,7 @@ class MagnusController:
                 mode=self.settings.arm_mode,
                 positions_path=self.settings.positions_path,
                 port=self.settings.arm_port,
+                auto_home=self.settings.arm_auto_home,
                 step_delay_s=self._arm_step_delay_s or 0.0,
             )
         self._started = True
@@ -286,7 +288,7 @@ class MagnusController:
     COMMANDS = (
         "start_game", "stop_game", "set_difficulty", "set_robot_side", "set_voice",
         "reset_detection", "rotate_mapping", "flip_view", "set_camera", "set_arm",
-        "arm_execute", "arm_stop", "say", "synthetic_move",
+        "arm_execute", "arm_stop", "arm_home", "say", "synthetic_move",
     )
 
     def command(self, name: str, params: Optional[dict] = None) -> dict:
@@ -442,10 +444,13 @@ class MagnusController:
     def _cmd_set_arm(self, mode: Optional[str] = None,
                      auto_execute: Optional[bool] = None,
                      port: Optional[int] = None,
-                     positions_path: Optional[str] = None) -> None:
+                     positions_path: Optional[str] = None,
+                     auto_home: Optional[bool] = None) -> None:
         changes: dict[str, Any] = {}
         if auto_execute is not None:
             changes["arm_auto_execute"] = bool(auto_execute)
+        if auto_home is not None:
+            changes["arm_auto_home"] = bool(auto_home)
         if port is not None:
             changes["arm_port"] = int(port)
         if positions_path:
@@ -454,12 +459,39 @@ class MagnusController:
             changes["arm_mode"] = mode
         if changes:
             self._save_settings(**changes)
-        if self.arm is not None and (mode is not None or port is not None or positions_path):
+        if self.arm is None:
+            return
+        if mode is not None or port is not None or positions_path:
             self.arm.configure(mode=self.settings.arm_mode,
                                positions_path=self.settings.positions_path,
-                               port=self.settings.arm_port)
+                               port=self.settings.arm_port,
+                               auto_home=self.settings.arm_auto_home)
             self._arm_pending = False
             self._emit("info", f"Brazo: modo {self.settings.arm_mode}")
+        elif auto_home is not None:
+            # Cambiar el ajuste no reconecta: solo afecta al próximo arranque
+            # (y al referenciado manual, que sigue disponible siempre).
+            self.arm.configure(auto_home=self.settings.arm_auto_home)
+
+    def _cmd_arm_home(self) -> None:
+        """Referencia el brazo a mano (botón "Referenciar" de la interfaz)."""
+        if self.arm is None or self.arm.mode == ARM_MODE_OFF:
+            self._emit("warn", "El brazo está apagado")
+            return
+
+        def on_done(ok: bool, error: Optional[str]) -> None:
+            self._commands.put(("_arm_homed", {"ok": ok, "error": error}))
+
+        if self.arm.home(on_done=on_done):
+            self._emit("info", "Referenciando el brazo…")
+        else:
+            self._emit("warn", "El brazo no puede referenciarse ahora mismo")
+
+    def _cmd__arm_homed(self, ok: bool, error: Optional[str]) -> None:
+        if ok:
+            self._emit("info", "Brazo referenciado: cero fijado en los topes")
+        else:
+            self._emit("error", error or "No pude referenciar el brazo")
 
     def _cmd_arm_execute(self) -> None:
         planned = self.session.planned

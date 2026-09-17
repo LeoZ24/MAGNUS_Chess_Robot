@@ -16,6 +16,7 @@
   const ARM_STATUS_ES = {
     off: "Sin brazo: mueve tú las piezas de MAGNUS",
     connecting: "Esperando a que la CyberPi se conecte…",
+    homing: "Referenciando: buscando los topes y fijando el cero…",
     ready: "Listo",
     busy: "Ejecutando jugada",
     error: "Error",
@@ -350,7 +351,8 @@
       : e.status === "iniciando" ? "warn" : "bad", e.error || `Stockfish ${e.status} · ${e.difficulty}`);
     const a = s.arm || { mode: "off", status: "off" };
     setPill("arm", a.mode === "off" ? "bad" : a.status === "ready" ? "ok" : a.status === "busy" ? "busy"
-      : a.status === "connecting" ? "warn" : "bad", a.error || `${ARM_MODE_ES[a.mode]} · ${a.status}`);
+      : (a.status === "connecting" || a.status === "homing") ? "warn" : "bad",
+      a.error || `${ARM_MODE_ES[a.mode]} · ${a.status}`);
     const vo = s.voice;
     setPill("voice", !vo.available ? "bad" : vo.muted ? "warn" : vo.speaking ? "busy" : "ok",
       vo.backend ? `${vo.backend}${vo.muted ? " (silenciada)" : ""}` : "Sin voz");
@@ -433,7 +435,8 @@
     if (!a) return;
     $("arm-mode-badge").textContent = ARM_MODE_ES[a.mode] || a.mode.toUpperCase();
     const led = $("arm-led");
-    led.className = "led " + (a.status === "ready" ? "ok" : a.status === "busy" ? "busy" : a.status === "connecting" ? "warn" : a.status === "error" ? "bad" : "");
+    led.className = "led " + (a.status === "ready" ? "ok" : a.status === "busy" ? "busy"
+      : (a.status === "connecting" || a.status === "homing") ? "warn" : a.status === "error" ? "bad" : "");
     $("arm-status-text").textContent = a.status === "error" ? (a.error || "Error") : ARM_STATUS_ES[a.status] || a.status;
     const planned = s.board.planned || {};
     let steps, mode;                       // mode: "busy" | "result" | "preview"
@@ -462,6 +465,11 @@
     $("btn-arm-execute").hidden = !a.pending;
     $("btn-arm-execute").classList.toggle("pulse", !!a.pending);
     $("btn-arm-stop").hidden = a.mode === "off";
+    const home = $("btn-arm-home");
+    home.hidden = a.mode === "off";
+    home.disabled = !a.can_home;
+    home.title = a.can_home ? "Busca los topes del brazo y fija ahí el cero"
+      : "Solo con el brazo conectado y parado";
     const p = a.positions;
     $("arm-coverage").textContent = p.complete ? `Tabla calibrada: ${p.calibrated}/${p.total} posiciones`
       : p.exists ? `Tabla incompleta: ${p.calibrated}/${p.total} calibradas` : "Sin tabla de posiciones (positions.json)";
@@ -519,6 +527,7 @@
     $("tg-muted").checked = !!st.voice_muted;
     $("tg-announce").checked = !!st.announce_human_moves;
     $("tg-arm-auto").checked = !!st.arm_auto_execute;
+    $("tg-arm-home").checked = !!st.arm_auto_home;
     if (!isEditing("in-idle")) { $("in-idle").value = st.idle_prompt_s; $("in-idle-v").textContent = st.idle_prompt_s ? `${st.idle_prompt_s} s` : "off"; }
     $("voice-backend").textContent = s.voice.available ? `Motor de voz: ${s.voice.backend}` : "Voz no disponible en este equipo";
     if (p) {
@@ -672,10 +681,12 @@
     $("btn-say").onclick = () => { const t = $("in-say").value.trim(); if (t) { command("say", { text: t }); $("in-say").value = ""; } };
     $("in-say").onkeydown = (e) => { if (e.key === "Enter") $("btn-say").click(); };
     $("tg-arm-auto").onchange = (e) => command("set_arm", { auto_execute: e.target.checked });
+    $("tg-arm-home").onchange = (e) => command("set_arm", { auto_home: e.target.checked });
     $("btn-arm-apply").onclick = () => command("set_arm", {
       port: parseInt($("in-arm-port").value, 10) || 5555, positions_path: $("in-positions").value.trim() });
     $("btn-arm-execute").onclick = () => command("arm_execute");
     $("btn-arm-stop").onclick = () => command("arm_stop");
+    $("btn-arm-home").onclick = () => command("arm_home");
     $("btn-start-2").onclick = () => { command("start_game"); openDrawer(false); };
     $("btn-stop").onclick = () => { command("stop_game"); openDrawer(false); };
     $("btn-new-game").onclick = () => { $("modal-over").classList.remove("open"); command("start_game"); };

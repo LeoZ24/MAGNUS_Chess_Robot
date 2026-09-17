@@ -5,9 +5,10 @@ nodo no debe saber:
 
     * tres **modos** intercambiables en caliente (``off`` / ``simulated`` /
       ``cyberpi``), ver :data:`magnus.app.settings.ARM_MODES`;
-    * la conexión con la CyberPi y la ejecución de cada jugada en **hilos
-      propios** (``connect()`` espera hasta 90 s a que la placa llame, y una
-      jugada física tarda varios segundos: nada de eso puede bloquear la visión);
+    * la conexión con la CyberPi, el **referenciado** (``home``) y la ejecución
+      de cada jugada en **hilos propios** (``connect()`` espera hasta 90 s a que
+      la placa llame, referenciar tarda decenas de segundos y una jugada física
+      varios más: nada de eso puede bloquear la visión);
     * **progreso paso a paso** y **parada** para mostrarlos en pantalla;
     * un informe de cobertura de ``positions.json`` para que el modo real solo
       se habilite cuando la tabla esté completa.
@@ -70,9 +71,14 @@ class ArmSupervisor:
         port: int = 5555,
         *,
         step_delay_s: float = SIMULATED_STEP_DELAY_S,
+        auto_home: bool = True,
         backend_factory: Optional[Callable[[int], ArmBackend]] = None,
     ):
         """
+        ``auto_home`` referencia el brazo nada más conectar (recomendado): los
+        motores encoder no tienen cero absoluto, así que sin referencia la
+        tabla de posiciones apunta a un sitio distinto en cada arranque.
+
         ``backend_factory(port)`` permite sustituir el ``CyberPiBackend`` real
         por uno falso en los tests del modo ``cyberpi``.
         """
@@ -81,12 +87,13 @@ class ArmSupervisor:
         self._positions_path = positions_path
         self._port = port
         self._step_delay_s = step_delay_s
+        self._auto_home = bool(auto_home)
         self._backend_factory = backend_factory or (lambda p: CyberPiBackend(port=p))
 
         self._node: Optional[ArmNode] = None
         self._planner = ArmNode(backend=FakeArmBackend(), table=make_fake_table())
         self._report: PositionsReport = inspect_positions_file(positions_path)
-        self._status = "off"          # off | connecting | ready | busy | error
+        self._status = "off"          # off | connecting | homing | ready | busy | error
         self._error: Optional[str] = None
         self._steps: list[str] = []
         self._step_index = -1
@@ -120,6 +127,10 @@ class ArmSupervisor:
         return self.status == "busy"
 
     @property
+    def auto_home(self) -> bool:
+        return self._auto_home
+
+    @property
     def report(self) -> PositionsReport:
         return self._report
 
@@ -136,6 +147,8 @@ class ArmSupervisor:
                 "status": self._status,
                 "error": self._error,
                 "port": self._port,
+                "auto_home": self._auto_home,
+                "can_home": self._can_home_locked(),
                 "steps": list(self._steps),
                 "step_index": self._step_index,
                 "executing_uci": self._executing_uci,
@@ -152,6 +165,7 @@ class ArmSupervisor:
         mode: Optional[str] = None,
         positions_path: Optional[str] = None,
         port: Optional[int] = None,
+        auto_home: Optional[bool] = None,
     ) -> None:
         """Cambia de modo (y/o de tabla/puerto).  Desconecta el modo anterior."""
         with self._lock:
@@ -161,6 +175,8 @@ class ArmSupervisor:
                 self._positions_path = positions_path
             if port is not None:
                 self._port = int(port)
+            if auto_home is not None:
+                self._auto_home = bool(auto_home)
             new_mode = mode or self._mode
             self._teardown_locked()
             self._mode = new_mode
@@ -225,12 +241,82 @@ class ArmSupervisor:
                     self._status, self._error = "error", str(exc)
                     self._node = None
             return
+
+        # Referenciado: sin él los ángulos de la tabla no significan nada
+        # (el encoder arranca en 0 dondequiera que esté el brazo).  Va aquí,
+        # en el hilo de conexión, porque tarda decenas de segundos.
+        if self._auto_home:
+            with self._lock:
+                if generation != self._generation:
+                    node.shutdown()
+                    return
+                self._status = "homing"
+            try:
+                node.home()
+            except (ArmBackendError, OSError) as exc:
+                with self._lock:
+                    if generation == self._generation:
+                        self._status = "error"
+                        self._error = (f"No pude referenciar el brazo: {exc} "
+                                       "Revisa los topes o desactiva el "
+                                       "referenciado automático.")
+                        self._node = None
+                node.shutdown()
+                return
+
         with self._lock:
             if generation != self._generation:      # ya se cambió de modo
                 node.shutdown()
                 return
             self._status = "ready"
             logger.info("Brazo CyberPi listo.")
+
+    # ------------------------------------------------------------------ #
+    # Referenciado (home)
+    # ------------------------------------------------------------------ #
+    def _can_home_locked(self) -> bool:
+        return self._node is not None and self._status == "ready"
+
+    def home(self, on_done: Optional[Callable[[bool, Optional[str]], None]] = None) -> bool:
+        """Vuelve a referenciar el brazo a mano.  ``False`` si no se puede ahora.
+
+        Sirve para recuperar el cero sin reiniciar la partida: si alguien
+        empuja el brazo o un motor pierde pasos, los ángulos de la tabla dejan
+        de apuntar a donde deben y esto los vuelve a alinear.
+
+        Corre en su propio hilo (referenciar tarda decenas de segundos).
+        ``on_done(ok, error)`` se llama desde ese hilo al terminar.
+        """
+        with self._lock:
+            if not self._can_home_locked():
+                return False
+            node = self._node
+            assert node is not None
+            self._status = "homing"
+            self._error = None
+            generation = self._generation
+        thread = threading.Thread(
+            target=self._home, args=(node, generation, on_done),
+            name="magnus-arm-home", daemon=True,
+        )
+        thread.start()
+        return True
+
+    def _home(self, node: ArmNode, generation: int, on_done) -> None:
+        ok, error = True, None
+        try:
+            node.home()
+        except (ArmNodeError, ArmBackendError, OSError) as exc:
+            ok, error = False, str(exc)
+            logger.error("Fallo al referenciar el brazo: %s", exc)
+        with self._lock:
+            if generation == self._generation and self._node is node:
+                self._error = error
+                # Un referenciado fallido deja el cero en un estado
+                # desconocido: mejor marcarlo en rojo que dejar jugar.
+                self._status = "ready" if ok else "error"
+        if on_done:
+            on_done(ok, error)
 
     # ------------------------------------------------------------------ #
     # Planificación y ejecución
