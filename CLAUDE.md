@@ -37,6 +37,7 @@ proyecto usa un enfoque de **"enseñar y reproducir" (teach & playback)**:
 cinemática inversa (no hay que resolver ángulos con trigonometría/atan2/ley
 de cosenos para mover el brazo durante el juego).** Esa complejidad se evitó
 deliberadamente. Lo que sí hay que escribir es:
+
 - Una estructura de datos para cargar/consultar la tabla de posiciones
 - Un reproductor de secuencias de movimiento (orden de pasos: aproximar →
   bajar → agarrar/soltar → subir → mover → repetir en destino)
@@ -51,8 +52,8 @@ flujo de juego en vivo.
 
 ## Hardware del brazo — específico
 
-| Actuador | Articulación | Puerto | Tipo |
-|----------|--------------|--------|------|
+| Actuador | Articulación | Puerto | Tipo                                               |
+| -------- | ------------ | ------ | -------------------------------------------------- |
 | Motor 1  | Hombro       | `EM1`  | Motor Encoder (kit mBot2), **transmisión directa** |
 | Motor 2  | Codo         | `EM2`  | Motor Encoder (kit mBot2), **transmisión directa** |
 | Servo 3  | Garra/agarre | `S1`   | Servomotor: acerca y aleja el imán N52 de la pieza |
@@ -118,10 +119,10 @@ tope. Es el error más fácil de cometer con este montaje.
 
 Estado calibrado del brazo real:
 
-| Eje | Busca su tope en | Ángulos válidos |
-|-----|------------------|-----------------|
+| Eje            | Busca su tope en                     | Ángulos válidos                 |
+| -------------- | ------------------------------------ | ------------------------------- |
 | Hombro (`EM1`) | negativo (`HOME_SHOULDER_SIGN = -1`) | de `0` a `+SHOULDER_TRAVEL_DEG` |
-| Codo (`EM2`)   | positivo (`HOME_ELBOW_SIGN = 1`)    | de `-ELBOW_TRAVEL_DEG` a `0` |
+| Codo (`EM2`)   | positivo (`HOME_ELBOW_SIGN = 1`)     | de `-ELBOW_TRAVEL_DEG` a `0`    |
 
 Por eso los límites **no se escriben a mano**: `_limits_from_home()` los deriva
 del sentido de referenciado, así no pueden contradecirlo, y un movimiento hacia
@@ -164,8 +165,8 @@ Otras causas, por orden de probabilidad: batería del shield baja (los motores
 ```json
 {
   "e4": {
-    "approach": {"shoulder": 32.5, "elbow": 110.0},
-    "engage":   {"shoulder": 35.0, "elbow": 118.0}
+    "approach": { "shoulder": 32.5, "elbow": 110.0 },
+    "engage": { "shoulder": 35.0, "elbow": 118.0 }
   }
 }
 ```
@@ -174,6 +175,7 @@ Otras causas, por orden de probabilidad: batería del shield baja (los motores
 - `engage`: el brazo está bajado, en posición de agarrar/soltar
 
 Una jugada simple (`e2`→`e4`, sin captura) se traduce en una secuencia como:
+
 ```
 approach(e2) → engage(e2) → [activar garra] → approach(e2)
             → approach(e4) → engage(e4) → [soltar garra] → approach(e4)
@@ -216,6 +218,7 @@ El engine está terminado. Usa Stockfish via protocolo UCI con `python-chess`.
 Tests completos en `tests/test_chess_engine.py`. No requiere refactoring.
 
 Si necesitas modificar algo aquí, los tests deben seguir pasando:
+
 ```bash
 pytest tests/ -v
 ```
@@ -224,6 +227,7 @@ pytest tests/ -v
 
 `BoardVisionNode.get_board_fen()` existe y funciona (validado con imágenes
 sintéticas en `tests/test_vision_node.py`). Componentes:
+
 - `aruco_detector.py` — detección + enclavamiento **multi-instancia** (varios
   marcadores comparten ID; se rastrean por posición), los 3 roles separados.
   Las esquinas son estáticas y de ID único: no se olvidan nunca (se recuerda su
@@ -257,6 +261,7 @@ tablero físicos (los parámetros de detección pueden requerir ajuste con luz r
 ### ✅ `magnus/voice/` — IMPLEMENTADO (falta elegir la voz definitiva)
 
 El robot narra sus jugadas y comenta las del rival, en español.
+
 - `backend.py` — `SpeechBackend` (ABC) + `PiperBackend` (neuronal local,
   **recomendado**: offline y portable a la Raspberry Pi) + `MacSayBackend`
   (respaldo sin instalación en macOS) + `FakeSpeechBackend` (tests).
@@ -312,6 +317,7 @@ HTTP de la librería estándar + HTML/CSS/JS sin frameworks).
   animadas por diff de placement); la cámara llega como MJPEG
 
 Reglas del paquete:
+
 - ❌ **No** toques el estado de la partida desde el hilo HTTP: todo pasa por
   `controller.command(nombre, params)` → cola → `_cmd_<nombre>()` en el hilo de visión
 - ❌ **No** añadas dependencias (ni pip ni CDN): la feria puede no tener internet
@@ -323,6 +329,7 @@ Reglas del paquete:
 ### 🔶 `magnus/arm/` — IMPLEMENTADO EN SOFTWARE; bloqueado por hardware
 
 Sigue el patrón de `magnus/engine/`:
+
 - `backend.py` — `ArmBackend` (ABC) + `FakeArmBackend` (tests/demos) +
   `CyberPiBackend` (servidor TCP al que la CyberPi se conecta como cliente;
   comandos de texto `HOME`/`LIMITS`/`MOVE`/`GRIPPER`/`ZERO`/`GET`/`STOP` con
@@ -353,6 +360,7 @@ límite de tiempo: una placa colgada es una placa a la que cuesta subirle un
 programa nuevo.
 
 Pendiente (bloqueado por hardware):
+
 - Medir el recorrido real de cada eje y ajustar `SHOULDER_TRAVEL_DEG` /
   `ELBOW_TRAVEL_DEG` (ahora son 300° provisionales, generosos de más)
 - Grabar `positions.json` real calibrando el brazo **desde el cero
@@ -368,11 +376,11 @@ Hay **tres tipos de marcadores ArUco** con propósitos completamente distintos.
 Si escribes código de detección, sepáralos por rango de ID — no los proceses
 con la misma lógica:
 
-| Rol                       | Cantidad | IDs | Para qué sirve |
-|-----------------------------|----------|----------------------|------------------|
-| Piezas de ajedrez          | 12 tipos (32 piezas físicas) | `0–23` con huecos | Construir la FEN (tipo + color de cada pieza) |
-| Esquinas del tablero        | 4        | `40–43`              | Homografía tablero↔cámara |
-| Marcador del brazo          | 1        | `44`                 | Rastreo de posición real del extremo del brazo |
+| Rol                  | Cantidad                     | IDs               | Para qué sirve                                 |
+| -------------------- | ---------------------------- | ----------------- | ---------------------------------------------- |
+| Piezas de ajedrez    | 12 tipos (32 piezas físicas) | `0–23` con huecos | Construir la FEN (tipo + color de cada pieza)  |
+| Esquinas del tablero | 4                            | `40–43`           | Homografía tablero↔cámara                      |
+| Marcador del brazo   | 1                            | `44`              | Rastreo de posición real del extremo del brazo |
 
 ```python
 ARUCO_DICT = aruco.DICT_4X4_50      # mismo diccionario para los tres roles
@@ -400,9 +408,9 @@ devuelve **listas** de detecciones. Las esquinas y el brazo sí tienen ID único
 pregrabados?** Es la base para una **corrección automática futura (V2, NO
 implementar ahora salvo que se pida explícitamente)**:
 
-1. Calcular dónde *debería* estar el marcador del brazo (homografía de
+1. Calcular dónde _debería_ estar el marcador del brazo (homografía de
    esquinas + casilla objetivo)
-2. Detectar dónde *está realmente* (cámara)
+2. Detectar dónde _está realmente_ (cámara)
 3. Calcular el offset/error
 4. Ajustar levemente los ángulos antes del siguiente movimiento
 
@@ -415,7 +423,7 @@ pregrabadas.
 físicamente impresos; los huecos entre IDs son intencionales):
 
 | Pieza   | Blancas | Negras |
-|---------|---------|--------|
+| ------- | ------- | ------ |
 | Peón    | `0`     | `12`   |
 | Caballo | `1`     | `15`   |
 | Alfil   | `2`     | `16`   |
@@ -433,6 +441,7 @@ copias imprimir: ×8 peones, ×2 torres/alfiles/caballos, ×1 dama/rey).
 ## FEN — formato que conecta visión y engine
 
 La FEN es el único dato que viaja del módulo de visión al engine:
+
 ```
 "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
   ^posición^                                   ^turno^ ^enroque^ ^al paso^ ^semi^ ^full^
@@ -572,14 +581,46 @@ piper-tts>=1.6                 # voz (OPCIONAL: sin esto juega en silencio)
 ```
 
 Voz (una sola vez, con internet):
+
 ```bash
 python3 -m piper.download_voices es_ES-davefx-medium --data-dir voices/
 python3 examples/audition_voices.py     # audiciona varias y elige
 ```
 
 Motor externo (binario):
+
 ```bash
 sudo apt install stockfish      # Linux / Raspberry Pi
 brew install stockfish          # macOS
 # o: export MAGNUS_ENGINE_PATH=/ruta/al/binario
 ```
+
+# Project Safety Rules
+
+## Automation Safety
+
+- NEVER create, enable, modify, or restart a scheduled task, routine, cron job, recurring job, watcher, or background automation unless I explicitly request it in my current message.
+- NEVER use `/schedule` or create a Routine on your own.
+- NEVER create a self-rescheduling task.
+- NEVER create a loop that can continue indefinitely.
+- NEVER re-arm, reschedule, or recreate a task after it finishes.
+- If a task would normally benefit from recurring execution, stop and ask me first.
+
+## Execution Limits
+
+- Work only on the current task.
+- Do not continue looking for additional work after the requested task is complete.
+- When the requested change is finished, stop and report what was changed.
+- Do not repeatedly inspect a repository when there are no new changes to analyze.
+
+## Resource Protection
+
+- Prefer a single focused pass over repeated checks.
+- Do not run background processes unless I explicitly request them.
+- Do not create scripts intended to repeatedly invoke Claude Code unless I explicitly request them.
+
+## Default Behavior
+
+- Manual execution is the default.
+- A task must end when the requested objective is complete.
+- Explicit user approval is required before any persistent automation is created.
