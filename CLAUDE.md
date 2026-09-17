@@ -551,6 +551,23 @@ tests/             # 320+ tests; todos corren sin hardware
 
 ---
 
+## ⛔ Automatizaciones de la sesión (consumo de tokens)
+
+**Prohibido programar check-ins recurrentes, en cadena o auto-renovables**
+(`send_later`, `create_trigger`, `ScheduleWakeup`, `/loop`, cron, "revisar
+el PR cada hora", etc.) **sin que el usuario lo pida explícitamente en ese
+mismo mensaje.** Un check-in horario de un PR agotó todos los tokens
+semanales del proyecto en dos días.
+
+- Después de crear o empujar un PR: **NO** llamar a `send_later`, **NO**
+  re-armar nada "hasta que se fusione". Con `subscribe_pr_activity` es
+  suficiente, y solo si el usuario lo pide.
+- Si un recordatorio programado se dispara y no hay nada que hacer,
+  **terminar sin re-armar el siguiente**. Nunca poner "re-armar el próximo
+  check-in" dentro del texto de un recordatorio.
+- Si el usuario pide vigilar algo, usar **un solo** `send_later` con hora fija
+  y decirle cuándo se disparará; no encadenar.
+
 ## Lo que NO debes hacer
 
 - ❌ No escribir cinemática inversa (IK) como parte del flujo de juego en vivo del brazo — los movimientos son pregrabados, se buscan en una tabla
