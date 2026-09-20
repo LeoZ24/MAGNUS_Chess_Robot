@@ -49,17 +49,61 @@ ELBOW_PORT    = "EM2"     # motor encoder del codo   (transmision directa)
 GRIPPER_PORT  = "S1"      # servo que acerca/aleja el iman N52
 
 # --- Movimiento ---
-# OJO con bajar demasiado la velocidad: el control interno del motor encoder
-# es de VELOCIDAD, y a pocas RPM el PWM que aplica no vence el peso del brazo
-# ni la friccion. El motor "quiere" moverse, no puede, y EM_turn devuelve el
-# control con el eje a medio camino. Si el brazo se queda corto, SUBE esto.
-MOVE_SPEED_RPM      = 60      # velocidad de la pasada principal
-MOVE_SPEED_FINE_RPM = 40      # velocidad de las pasadas de correccion
-MOVE_FINE_BELOW_DEG = 15.0    # por debajo de este error se usa la fina
+# El control interno del motor encoder es de VELOCIDAD, no de par: a pocas RPM
+# el PWM que aplica no vence el peso del brazo ni la friccion. El motor
+# "quiere" moverse, no puede, y EM_turn devuelve el control con el eje a medio
+# camino. Por eso cada movimiento tiene DOS FASES:
+#
+#   1. TRAMO GRUESO (_drive_turns): EM_turn, que tiene rampa y va suave. Si una
+#      pasada no mueve el eje, se SUBE la velocidad (mas RPM pedidas = mas PWM =
+#      mas par). Bajarla al acercarse al objetivo, que es lo intuitivo, es justo
+#      lo que dejaba el hombro clavado a 15 grados del destino.
+#   2. ULTIMO TRAMO (_creep_to): impulsos de POTENCIA cruda, la misma tecnica
+#      con la que HOME empuja contra el tope. La potencia no depende del error,
+#      asi que hay par aunque falte medio grado. Como no sabe frenar sola, se
+#      aplica en impulsos cortos leyendo el encoder entre uno y otro.
+MOVE_SPEED_RPM      = 60      # velocidad de la pasada gruesa
+MOVE_SPEED_STEP_RPM = 30      # cuanto sube si una pasada se queda corta
+MOVE_SPEED_MAX_RPM  = 120     # techo de esa escalada
+MOVE_SPEED_FINE_RPM = 40      # tramos sin carga (retrocesos del referenciado)
 TOLERANCE_DEG       = 1.0     # objetivo alcanzado si el error es menor
-MOVE_MAX_PASSES     = 4       # correcciones antes de rendirse
+MOVE_MAX_PASSES     = 4       # pasadas gruesas antes de pasar a los impulsos
+MOVE_PROGRESS_RATIO = 0.6     # fraccion del tramo pedido que una pasada debe
+                              # cubrir para considerarla buena. El fallo real no
+                              # es que el eje no se mueva, es que se queda a un
+                              # cuarto de camino: con "no se movio nada" no se
+                              # detectaba nunca y la velocidad no subia.
 MOVE_FAIL_DEG       = 3.0     # error final que se considera fallo -> ERR
 MOVE_SETTLE_S       = 0.15    # dejar que el encoder se asiente entre pasadas
+MOVE_SAG_DEG        = 2.0     # repaso final: cuanto puede ceder un eje mientras
+                              # se mueve el otro antes de volver a corregirlo
+
+# Orden de los ejes dentro de un MOVE. Con el hombro primero el brazo gira
+# sobre su base y despues se despliega: se ve mejor y ademas el codo sigue
+# recogido durante el giro, asi que barre menos tablero. El repaso final
+# corrige al hombro si cede al desplegarse el codo.
+MOVE_SHOULDER_FIRST = True
+
+# --- Impulsos de potencia del ultimo tramo ---
+# La potencia cruda da par pero no sabe frenar: si el impulso dura de mas, el
+# eje se pasa de largo. Como no sabemos a que velocidad gira este brazo a una
+# potencia dada (depende de la pose, del peso y de la bateria), NO se fija la
+# duracion a ojo: se MIDE. Cada impulso deja un ritmo en grados/segundo, y el
+# siguiente dura lo justo para cubrir CREEP_AIM de lo que falta. Apuntar a
+# menos del 100% es lo que hace que el eje se acerque sin cruzar el objetivo.
+#
+# Si el brazo se queda corto al final, sube CREEP_POWER_MAX; si se pasa de
+# largo, baja CREEP_AIM o CREEP_PULSE_MIN_S.
+CREEP_POWER         = 18      # % de potencia del primer impulso
+CREEP_POWER_STEP    = 6       # subida cuando un impulso no mueve el eje
+CREEP_POWER_MAX     = 40      # techo: por encima no es falta de par
+CREEP_AIM           = 0.6     # a que fraccion de lo que falta apunta el impulso
+CREEP_PULSE_MIN_S   = 0.05    # impulso mas corto (y el que mide el ritmo)
+CREEP_PULSE_MAX_S   = 0.20    # nunca empujar mas de esto sin volver a mirar
+CREEP_REST_S        = 0.06    # pausa para que el encoder se asiente
+CREEP_MIN_DELTA_DEG = 0.3     # impulso que mueve menos que esto = falta par
+CREEP_MAX_PULSES    = 30      # cota dura: nunca un bucle sin salida
+CREEP_MAX_FLIPS     = 4       # veces que puede cruzar el objetivo antes de dejarlo
 
 # Juego de la transmision (backlash). Si el brazo no repite al llegar a un
 # angulo desde un lado o desde el otro, sube esto: el ultimo tramo entrara
@@ -176,13 +220,113 @@ def _clamp(v, lim, name):
     return v
 
 
+def _drive_turns(target, port, current, name):
+    """Tramo grueso con EM_turn, subiendo la velocidad si una pasada se queda
+    corta.
+
+    EM_turn es RELATIVO y bajo carga no cubre el giro entero, asi que se repite
+    la correccion en vez de mandar un solo giro y confiar. La clave esta en el
+    criterio: una pasada que cubre menos de MOVE_PROGRESS_RATIO de lo pedido no
+    es un eje trabado, es un eje al que a esa velocidad no le llega el par, y la
+    siguiente pasada va mas RAPIDA (mas PWM). OJO: el eje suele avanzar algo (un
+    cuarto del camino), asi que "no se ha movido nada" no lo detecta; bajar la
+    velocidad al acercarse al objetivo, que es lo intuitivo, lo empeora.
+
+    Devuelve el angulo alcanzado; los ultimos grados los cierra _creep_to.
+    """
+    speed = MOVE_SPEED_RPM
+    for _ in range(MOVE_MAX_PASSES):
+        delta = target - current
+        if abs(delta) <= TOLERANCE_DEG:
+            break
+        _hw_turn(delta, speed, port)
+        time.sleep(MOVE_SETTLE_S)
+        previous = current
+        current = _hw_get_angle(port)
+        # Una pasada "buena" cubre casi todo lo que se le pidio. Si se queda a
+        # un cuarto de camino no es que el eje este trabado: es que a esa
+        # velocidad no hay par. La siguiente va mas rapida.
+        if abs(current - previous) < abs(delta) * MOVE_PROGRESS_RATIO:
+            if speed >= MOVE_SPEED_MAX_RPM:
+                break          # ya va al maximo: que lo termine _creep_to
+            speed = min(speed + MOVE_SPEED_STEP_RPM, MOVE_SPEED_MAX_RPM)
+            _log("  " + name + " corto, subo a " + str(speed) + " rpm")
+    return current
+
+
+def _creep_to(target, port, name):
+    """Cierra el ultimo tramo a impulsos de POTENCIA cruda.
+
+    Aqui no se usa EM_turn a proposito: pedir "gira 2 grados" se traduce en
+    muy pocas RPM, y a pocas RPM el PWM no vence el peso del brazo. La potencia
+    cruda no depende del error (es la misma con la que HOME empuja contra el
+    tope), asi que hay par aunque falte medio grado. A cambio no sabe frenar
+    sola: se aplica en impulsos cortos, leyendo el encoder entre uno y otro.
+
+    Si un impulso no mueve el eje, sube la potencia; si se pasa de largo, vuelve
+    a la minima. Siempre termina: CREEP_MAX_PULSES acota el bucle.
+    """
+    current = _hw_get_angle(port)
+    power = CREEP_POWER
+    rate = 0.0          # grados/segundo medidos; 0 = todavia no se sabe
+    last_sign = 0
+    flips = 0
+    try:
+        for _ in range(CREEP_MAX_PULSES):
+            error = target - current
+            if abs(error) <= TOLERANCE_DEG:
+                break
+            sign = 1 if error > 0 else -1
+            if last_sign != 0 and sign != last_sign:
+                # Hemos cruzado el objetivo: bajar a la potencia minima para no
+                # quedarnos oscilando a un lado y otro. El ritmo medido SI se
+                # conserva: es lo unico que evita repetir el impulso que se
+                # paso de largo.
+                flips += 1
+                if flips > CREEP_MAX_FLIPS:
+                    break
+                power = CREEP_POWER
+            last_sign = sign
+
+            # Duracion del impulso: la que hace falta, al ritmo medido en el
+            # impulso anterior, para cubrir CREEP_AIM de lo que queda. Sin
+            # medida todavia, el mas corto posible (que es el que la toma).
+            if rate > 0.0:
+                pulse = abs(error) * CREEP_AIM / rate
+                pulse = max(CREEP_PULSE_MIN_S, min(pulse, CREEP_PULSE_MAX_S))
+            else:
+                pulse = CREEP_PULSE_MIN_S
+
+            _hw_set_power(power * sign, port)
+            time.sleep(pulse)
+            _hw_stop_axis(port)
+            time.sleep(CREEP_REST_S)
+
+            previous = current
+            current = _hw_get_angle(port)
+            moved = abs(current - previous)
+            if moved < CREEP_MIN_DELTA_DEG:
+                # El impulso no ha movido nada: falta par, no duracion.
+                if power >= CREEP_POWER_MAX:
+                    break       # ni a tope se mueve: el problema no es el PWM
+                power = min(power + CREEP_POWER_STEP, CREEP_POWER_MAX)
+                rate = 0.0      # a otra potencia, el ritmo anterior no vale
+                _log("  " + name + " impulso a " + str(power) + "%")
+            else:
+                # Incluye lo que el eje rueda tras cortar la potencia, asi que
+                # el ritmo sale algo alto y los impulsos, algo cortos. Mejor
+                # quedarse corto y repetir que pasarse.
+                rate = moved / pulse
+    finally:
+        _hw_stop_axis(port)     # que un fallo nunca deje el motor empujando
+    return current
+
+
 def _move_axis(target, port, lim, name):
     """Lleva el eje a ``target`` (grados de motor absolutos) y lo VERIFICA.
 
-    EM_turn es relativo y bajo carga se queda corto: decelera al acercarse al
-    objetivo y el ultimo tramo puede no tener par suficiente. Por eso aqui se
-    repite la correccion hasta entrar en tolerancia, en vez de mandar un solo
-    giro y confiar. Devuelve el angulo realmente alcanzado.
+    Dos fases: el tramo grueso con EM_turn y, si aun falta, el ultimo tramo a
+    impulsos de potencia. Devuelve el angulo realmente alcanzado.
     """
     target = _clamp(target, lim, name)
     start = _hw_get_angle(port)
@@ -194,15 +338,9 @@ def _move_axis(target, port, lim, name):
         _hw_turn(pre - start, MOVE_SPEED_RPM, port)
         time.sleep(MOVE_SETTLE_S)
 
-    current = start
-    for _ in range(MOVE_MAX_PASSES):
-        delta = target - current
-        if abs(delta) <= TOLERANCE_DEG:
-            break
-        speed = MOVE_SPEED_FINE_RPM if abs(delta) < MOVE_FINE_BELOW_DEG else MOVE_SPEED_RPM
-        _hw_turn(delta, speed, port)
-        time.sleep(MOVE_SETTLE_S)
-        current = _hw_get_angle(port)
+    current = _drive_turns(target, port, _hw_get_angle(port), name)
+    if abs(target - current) > TOLERANCE_DEG:
+        current = _creep_to(target, port, name)
 
     error = target - current
     if VERBOSE:
@@ -211,8 +349,48 @@ def _move_axis(target, port, lim, name):
     if abs(error) > MOVE_FAIL_DEG:
         raise ValueError(
             name + " no alcanzo " + str(target) + " (quedo en " + str(current)
-            + "). Bateria baja, velocidad insuficiente o tope mecanico?")
+            + "). Bateria baja, potencia insuficiente o tope mecanico?")
     return current
+
+
+def _move_both(shoulder, elbow):
+    """Mueve los dos ejes en el orden configurado y repasa el resultado.
+
+    El orden importa dos veces. Estetico: con el hombro primero el brazo gira
+    sobre su base y luego se despliega (y de paso barre menos tablero, porque
+    el codo sigue recogido durante el giro). Y fisico: mover el segundo eje
+    cambia el par que aguanta el primero — al desplegar el codo el hombro tiene
+    que sostener mas brazo — asi que el primero puede ceder unos grados justo
+    despues de darlo por bueno. Por eso al final se releen los dos encoders y
+    se corrige el que se haya ido.
+
+    Devuelve siempre ``(hombro, codo)``, sea cual sea el orden de ejecucion.
+    """
+    shoulder_axis = (shoulder, SHOULDER_PORT, SHOULDER_LIM, "hombro")
+    elbow_axis = (elbow, ELBOW_PORT, ELBOW_LIM, "codo")
+    if MOVE_SHOULDER_FIRST:
+        order = (shoulder_axis, elbow_axis)
+    else:
+        order = (elbow_axis, shoulder_axis)
+
+    # Comprobar los DOS angulos antes de mover nada: si el segundo esta fuera
+    # de limites, el brazo ya se habria movido a medias y la jugada se queda a
+    # mitad con la pieza en el aire. Mejor fallar en seco.
+    for target, port, lim, name in order:
+        _clamp(target, lim, name)
+
+    reached = {}
+    for target, port, lim, name in order:
+        reached[name] = _move_axis(target, port, lim, name)
+
+    # Repaso final. El umbral es MOVE_SAG_DEG y no TOLERANCE_DEG para no gastar
+    # tiempo persiguiendo el ruido del encoder en cada jugada.
+    for target, port, lim, name in order:
+        if abs(target - _hw_get_angle(port)) > MOVE_SAG_DEG:
+            _log("  " + name + " cedio, repaso")
+            reached[name] = _move_axis(target, port, lim, name)
+
+    return reached["hombro"], reached["codo"]
 
 
 # ======================= REFERENCIADO (HOME) =======================
@@ -311,10 +489,7 @@ def handle(line):
     if cmd == "MOVE":
         if len(parts) != 3:
             return "ERR MOVE requiere 2 argumentos"
-        sh = float(parts[1])
-        el = float(parts[2])
-        got_sh = _move_axis(sh, SHOULDER_PORT, SHOULDER_LIM, "hombro")
-        got_el = _move_axis(el, ELBOW_PORT, ELBOW_LIM, "codo")
+        got_sh, got_el = _move_both(float(parts[1]), float(parts[2]))
         return "ACK MOVE " + str(got_sh) + " " + str(got_el)
 
     if cmd == "GRIPPER":

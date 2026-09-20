@@ -137,21 +137,42 @@ signo de cada eje solo.
 tendrán el mismo signo (hombro positivos, codo negativos). Si al calibrar sale
 un valor con el signo contrario, está mal medido.
 
-### Si los motores "apenas se mueven"
+### Si los motores se quedan cortos
 
 El control interno del motor encoder es de **velocidad**, no de par: a pocas
 RPM el PWM que aplica no vence el peso del brazo, el eje se queda a medio
-camino y `EM_turn` devuelve el control igualmente. Por eso el cliente:
+camino y `EM_turn` devuelve el control igualmente. Por eso cada `MOVE` tiene
+**dos fases** (`_move_axis` en el cliente):
 
-1. usa `MOVE_SPEED_RPM = 60` (con 25 se atascaba);
-2. **verifica y reintenta** hasta `MOVE_MAX_PASSES` en vez de mandar un solo
-   giro y confiar;
-3. devuelve los ángulos realmente alcanzados (`ACK MOVE <hombro> <codo>`) y
-   contesta `ERR` si se quedó fuera de `MOVE_FAIL_DEG`.
+1. **Tramo grueso** (`_drive_turns`): `EM_turn`, que va suave y con rampa. Si
+   una pasada cubre menos de `MOVE_PROGRESS_RATIO` de lo que se le pidió, la
+   siguiente va **más rápida** — más RPM pedidas = más PWM = más par.
+   ⚠️ El criterio es *quedarse corto*, no *no moverse*: el fallo real era que
+   el eje cubría un cuarto del giro, lo cual "no se movió nada" no detecta.
+   Bajar la velocidad al acercarse al objetivo es justo lo contrario de lo que
+   hay que hacer.
+2. **Último tramo** (`_creep_to`): impulsos de **potencia cruda**, la misma
+   técnica con la que `HOME` empuja contra el tope. La potencia no depende del
+   error, así que hay par aunque falte medio grado. Como no sabe frenar sola,
+   cada impulso **mide** el ritmo real (grados/segundo) y el siguiente dura lo
+   justo para cubrir `CREEP_AIM` de lo que queda: así el eje converge sin
+   cruzar el objetivo, sea el brazo rápido o lento.
 
-Otras causas, por orden de probabilidad: batería del shield baja (los motores
-**no** se alimentan del USB), y cables o topes tirando del brazo.
+Además, `MOVE` mueve **primero el hombro y luego el codo** (`MOVE_SHOULDER_FIRST`)
+y al final **repasa los dos**: al desplegar el codo, el hombro tiene que
+sostener más brazo y puede ceder unos grados después de darlo por bueno.
+Los ángulos realmente alcanzados vuelven en `ACK MOVE <hombro> <codo>`, y si
+alguno se quedó fuera de `MOVE_FAIL_DEG` la placa contesta `ERR`.
+
+Si aun así se queda corto: batería del shield baja (los motores **no** se
+alimentan del USB) es la causa número uno; después, cables o topes tirando del
+brazo. Las perillas a tocar son `CREEP_POWER_MAX` y `MOVE_SPEED_MAX_RPM`.
 `python3 test_humo.py` mide el error de cada eje e imprime el diagnóstico.
+
+El control se prueba **sin brazo** en `tests/test_cyberpi_client_motion.py`:
+carga el cliente como texto, le enchufa un motor simulado que se queda corto y
+que cede, y comprueba que converge igualmente. Si tocas `_move_axis`,
+`_drive_turns` o `_creep_to`, esos tests deben seguir pasando.
 
 ---
 

@@ -71,15 +71,21 @@ def _diagnostico(nombre, pedido, logrado):
               "probabilidad:")
         print("     1. Bateria del shield baja (los motores NO se alimentan "
               "del USB).")
-        print("     2. MOVE_SPEED_RPM demasiado bajo en el cliente CyberPi: a "
-              "pocas RPM")
-        print("        el control interno no aplica par suficiente. Sube a "
-              "60-80.")
-        print("     3. Tope mecanico o cable tirando en ese sentido.")
+        print("     2. Tope mecanico o cable tirando en ese sentido.")
+        print("     3. Placa con un cliente viejo: el actual sube solo la "
+              "velocidad")
+        print("        cuando una pasada se queda corta y remata a impulsos "
+              "de potencia.")
+        print("        Vuelve a subir examples/cyberpi_arm_client.py desde "
+              "mBlock.")
     else:
-        print(f"   PARCIAL: el {nombre} se quedo corto. Suele ser par justo: "
-              "sube")
-        print("     MOVE_SPEED_RPM o MOVE_MAX_PASSES en el cliente CyberPi.")
+        print(f"   PARCIAL: el {nombre} se quedo corto pese a los impulsos de")
+        print("     potencia del ultimo tramo. Sube CREEP_POWER_MAX (y si hace "
+              "falta")
+        print("     MOVE_SPEED_MAX_RPM) en el cliente CyberPi, y comprueba la "
+              "bateria:")
+        print("     un shield flojo se nota antes aqui que en ningun otro "
+              "sitio.")
     print("   OJO: si el ENCODER marca el angulo correcto pero el brazo casi "
           "no se mueve,")
     print("   el problema no es electrico sino de transmision (revisa que el "
