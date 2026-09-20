@@ -320,47 +320,46 @@ primera versión, y suficiente para una feria científica:
 
 ### Formato de la tabla (`magnus/arm/positions.json`)
 
-> Formato **implementado** en `magnus/arm/positions_table.py`: dos
-> sub-posiciones por casilla. Las **unidades** (grados vs. pasos de encoder)
-> quedan abiertas: la tabla y el backend deben usar las mismas, el código no
-> las interpreta. La plantilla vacía se genera con
-> `python3 examples/generate_positions_template.py`.
+Una posición de hombro y codo por casilla, en grados de motor desde `HOME`.
+El brazo no tiene movimiento vertical: el servo **S1** recoge y suelta usando
+los mismos dos ángulos para todas las piezas.
 
-Dos sub-posiciones por casilla, para evitar que el brazo golpee piezas vecinas
-al desplazarse:
+La plantilla vacía (`python3 examples/generate_positions_template.py`) usa:
 
 ```json
 {
-  "e4": {
-    "approach": {"shoulder": 32.5, "elbow": 110.0},
-    "engage":   {"shoulder": 35.0, "elbow": 118.0}
-  },
-  "e5": {
-    "approach": {"shoulder": 30.0, "elbow": 108.0},
-    "engage":   {"shoulder": 32.0, "elbow": 115.0}
-  }
+  "e4": {"shoulder": null, "elbow": null},
+  "e5": {"shoulder": null, "elbow": null}
 }
 ```
 
-- **`approach`** = el brazo está sobre la casilla, a una altura segura (no toca piezas)
-- **`engage`** = el brazo está bajado, en posición de agarrar/soltar la pieza
+Sustituye los `null` por lecturas reales. Las tablas antiguas con
+`approach`/`engage` siguen cargando; se usa **`engage`** como posición única.
 
-Una jugada típica (`e2` → `e4`, sin captura) se traduce en una secuencia como:
+Una jugada típica (`e2` → `e4`, sin captura):
 
 ```
-approach(e2) → engage(e2) → cerrar garra → approach(e2)
-            → approach(e4) → engage(e4) → abrir garra → approach(e4)
+S1 a reposo → mover a e2 → S1 recoge → mover a e4 → S1 suelta
 ```
 
-### Cómo generar la tabla
+### Cómo grabar la tabla
 
-> ⚠️ **Pendiente de decidir.** Opciones posibles:
-> 1. Cálculo geométrico manual (con las medidas reales del brazo) y luego ajuste fino por prueba y error
-> 2. Una herramienta de calibración: mover el brazo manualmente o con un script de control en vivo, y grabar la posición resultante para cada casilla
-> 3. Una mezcla: geometría aproximada + corrección manual por casilla
+Con el cliente habitual en la CyberPi y `play.py` cerrado, ejecuta:
 
-Cualquiera que sea el método, el resultado final debe ser el mismo archivo
-de datos (`positions.json` o similar), independiente de cómo se generó.
+```bash
+python3 examples/record_arm_positions.py e4
+# O todas las casillas y las zonas discard/exchange:
+python3 examples/record_arm_positions.py --all
+```
+
+El script referencia con `HOME` y detiene los motores. Coloca el brazo a mano
+en cada destino y pulsa **Enter una sola vez por casilla**. Imprime el JSON
+para copiarlo a `magnus/arm/positions.json`; no escribe la tabla automáticamente.
+No reinicies la CyberPi entre lecturas: perderías el cero.
+
+Cuando conectes S1, ajusta `GRIPPER_ENGAGE_ANGLE` (recoger) y
+`GRIPPER_RELEASE_ANGLE` (posición inicial para soltar) en el cliente CyberPi.
+Sus valores actuales son provisionales; no se graban por casilla ni por pieza.
 
 ### Corrección automática de posición (V2 — futuro, no implementar todavía)
 

@@ -65,3 +65,17 @@ def test_broken_json(tmp_path):
     path.write_text("{", encoding="utf-8")
     report = inspect_positions_file(path)
     assert report.exists and report.error and not report.complete
+
+
+def test_single_position_format_coverage(tmp_path):
+    raw = {k: {"shoulder": 9999.0, "elbow": -9999.0} for k in REQUIRED_KEYS}
+    path = tmp_path / "positions.json"
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    assert inspect_positions_file(path).complete
+    raw["e4"] = {"shoulder": None, "elbow": None}
+    raw["h8"] = {"shoulder": float("inf"), "elbow": -9999.0}
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    report = inspect_positions_file(path)
+    assert report.missing == ["e4"]
+    assert report.invalid == ["h8"]
+    assert not report.complete

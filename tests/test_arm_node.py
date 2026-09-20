@@ -24,14 +24,13 @@ def _steps_as_strings(steps) -> list[str]:
 def _pick_place(src: str, dst: str) -> list[str]:
     """Secuencia esperada de un pick & place simple."""
     return [
-        f"approach({src})", f"engage({src})", "grip_on", f"approach({src})",
-        f"approach({dst})", f"engage({dst})", "grip_off", f"approach({dst})",
+        f"move({src})", "grip_on", f"move({dst})", "grip_off",
     ]
 
 
 def test_simple_move(arm):
     resp = MoveResponse(uci="e2e4", from_square="e2", to_square="e4")
-    assert _steps_as_strings(arm.plan(resp)) == _pick_place("e2", "e4")
+    assert _steps_as_strings(arm.plan(resp)) == ["grip_off"] + _pick_place("e2", "e4")
 
 
 def test_capture_removes_piece_first(arm):
@@ -40,7 +39,7 @@ def test_capture_removes_piece_first(arm):
         is_capture=True, captured_square="d5",
     )
     expected = _pick_place("d5", config.ZONE_DISCARD) + _pick_place("e4", "d5")
-    assert _steps_as_strings(arm.plan(resp)) == expected
+    assert _steps_as_strings(arm.plan(resp)) == ["grip_off"] + expected
 
 
 def test_en_passant_uses_captured_square(arm):
@@ -50,7 +49,7 @@ def test_en_passant_uses_captured_square(arm):
         is_capture=True, is_en_passant=True, captured_square="d5",
     )
     expected = _pick_place("d5", config.ZONE_DISCARD) + _pick_place("e5", "d6")
-    assert _steps_as_strings(arm.plan(resp)) == expected
+    assert _steps_as_strings(arm.plan(resp)) == ["grip_off"] + expected
 
 
 def test_kingside_castle_moves_king_then_rook(arm):
@@ -59,7 +58,7 @@ def test_kingside_castle_moves_king_then_rook(arm):
         is_castling=True, is_kingside_castle=True, rook_from="h1", rook_to="f1",
     )
     expected = _pick_place("e1", "g1") + _pick_place("h1", "f1")
-    assert _steps_as_strings(arm.plan(resp)) == expected
+    assert _steps_as_strings(arm.plan(resp)) == ["grip_off"] + expected
 
 
 def test_queenside_castle(arm):
@@ -68,7 +67,7 @@ def test_queenside_castle(arm):
         is_castling=True, rook_from="a8", rook_to="d8",
     )
     expected = _pick_place("e8", "c8") + _pick_place("a8", "d8")
-    assert _steps_as_strings(arm.plan(resp)) == expected
+    assert _steps_as_strings(arm.plan(resp)) == ["grip_off"] + expected
 
 
 def test_promotion_swaps_piece(arm):
@@ -79,7 +78,7 @@ def test_promotion_swaps_piece(arm):
         _pick_place("e7", config.ZONE_DISCARD)
         + _pick_place(config.ZONE_EXCHANGE, "e8")
     )
-    assert _steps_as_strings(arm.plan(resp)) == expected
+    assert _steps_as_strings(arm.plan(resp)) == ["grip_off"] + expected
 
 
 def test_promotion_with_capture(arm):
@@ -92,7 +91,7 @@ def test_promotion_with_capture(arm):
         + _pick_place("e7", config.ZONE_DISCARD)
         + _pick_place(config.ZONE_EXCHANGE, "d8")
     )
-    assert _steps_as_strings(arm.plan(resp)) == expected
+    assert _steps_as_strings(arm.plan(resp)) == ["grip_off"] + expected
 
 
 def test_incomplete_response_raises(arm):
@@ -109,17 +108,18 @@ def test_execute_sends_commands_to_backend():
         resp = MoveResponse(uci="e2e4", from_square="e2", to_square="e4")
         arm.execute(resp)
 
-    # connect + 8 primitivas (6 move_to + 2 garra) + disconnect
-    assert backend.commands[0] == ("connect",)
-    assert backend.commands[-1] == ("disconnect",)
-    inner = backend.commands[1:-1]
-    assert len(inner) == 8
-    assert inner[2] == ("gripper", True)
-    assert inner[6] == ("gripper", False)
-    # Los move_to deben usar exactamente los valores de la tabla.
-    e2 = table.get("e2")
-    assert inner[0] == ("move_to", e2.approach.shoulder, e2.approach.elbow)
-    assert inner[1] == ("move_to", e2.engage.shoulder, e2.engage.elbow)
+    # S1 vuelve a reposo, dos posiciones y recoger/soltar: sin alturas.
+    e2 = table.get("e2").position
+    e4 = table.get("e4").position
+    assert backend.commands == [
+        ("connect",),
+        ("gripper", False),
+        ("move_to", e2.shoulder, e2.elbow),
+        ("gripper", True),
+        ("move_to", e4.shoulder, e4.elbow),
+        ("gripper", False),
+        ("disconnect",),
+    ]
 
 
 def test_plan_fails_fast_if_zone_missing():

@@ -43,9 +43,8 @@ SIMULATED_STEP_DELAY_S = 0.45
 
 # Textos legibles de cada primitiva (para la lista de pasos de la interfaz).
 STEP_LABELS = {
-    "approach": "Aproximar a {target}",
-    "engage": "Bajar a {target}",
-    "grip_on": "Activar garra",
+    "move": "Mover a {target}",
+    "grip_on": "Recoger pieza",
     "grip_off": "Soltar pieza",
 }
 

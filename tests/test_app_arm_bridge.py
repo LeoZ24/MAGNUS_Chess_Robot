@@ -40,15 +40,16 @@ def _complete_table(path):
 
 
 def test_describe_step_uses_zone_labels():
-    assert describe_step(ArmStep("approach", "discard")) == "Aproximar a zona de descarte"
-    assert describe_step(ArmStep("grip_on")) == "Activar garra"
+    assert describe_step(ArmStep("move", "discard")) == "Mover a zona de descarte"
+    assert describe_step(ArmStep("grip_on")) == "Recoger pieza"
 
 
 def test_off_mode_previews_but_never_executes():
     sup = ArmSupervisor(mode="off")
     assert sup.status == "off" and not sup.is_ready
     preview = sup.preview(_resp())
-    assert preview[0] == "Aproximar a e2" and len(preview) == 8
+    assert preview == ["Soltar pieza", "Mover a e2", "Recoger pieza",
+                       "Mover a e4", "Soltar pieza"]
     assert sup.execute(_resp()) is False
     sup.shutdown()
 
@@ -62,7 +63,7 @@ def test_simulated_mode_executes_with_progress_and_callback():
     assert done == [(True, None)]
     snap = sup.snapshot()
     assert snap["status"] == "ready" and snap["last_outcome"] == "done"
-    assert snap["last_uci"] == "e2e4" and snap["step_index"] == len(snap["steps"]) == 8
+    assert snap["last_uci"] == "e2e4" and snap["step_index"] == len(snap["steps"]) == 5
     sup.shutdown()
 
 
@@ -154,16 +155,16 @@ def test_snapshot_is_thread_safe_under_execution():
 
     t = threading.Thread(target=reader)
     t.start()
-    sup.execute(_resp())
-    assert _wait(lambda: sup.snapshot()["last_outcome"] == "done")
-    # Esperar a que el lector LLEGUE A VER el estado final en vez de suponer
-    # que lo alcanzó a muestrear: pararlo antes era una carrera (el hilo podía
-    # quedarse en el paso 7 si el planificador no le daba turno a tiempo).
-    assert _wait(lambda: 8 in seen)
-    stop.set()
-    t.join()
-    assert max(seen) == 8
-    sup.shutdown()
+    try:
+        sup.execute(_resp())
+        assert _wait(lambda: sup.snapshot()["last_outcome"] == "done")
+        # Esperar a que el lector vea el estado final antes de detenerlo.
+        assert _wait(lambda: 5 in seen)
+        assert max(seen) == 5
+    finally:
+        stop.set()
+        t.join()
+        sup.shutdown()
 
 
 # ---------------------------------------------------------------------- #
