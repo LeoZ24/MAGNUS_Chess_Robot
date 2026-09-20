@@ -54,6 +54,16 @@ ALL_SQUARES: tuple[str, ...] = tuple(
 # casillas y las dos zonas (capturas y promociones).
 REQUIRED_KEYS: tuple[str, ...] = ALL_SQUARES + (config.ZONE_DISCARD, config.ZONE_EXCHANGE)
 
+# Claves que la tabla PUEDE tener pero no necesita para jugar.  La de reposo
+# entra aquí y no en REQUIRED_KEYS a propósito: si fuese obligatoria, las
+# tablas ya grabadas pasarían a estar "incompletas" y la interfaz dejaría de
+# permitir el brazo real hasta volver a calibrar.  Sin ella el brazo juega
+# igual, solo que se queda donde termine la jugada.
+OPTIONAL_KEYS: tuple[str, ...] = (config.ZONE_PARK,)
+
+# Todo lo que tiene sentido grabar con examples/record_arm_positions.py.
+RECORDABLE_KEYS: tuple[str, ...] = REQUIRED_KEYS + OPTIONAL_KEYS
+
 
 class PositionsTableError(Exception):
     """La tabla de posiciones es inválida o está incompleta."""
@@ -174,7 +184,7 @@ def make_fake_table(include_zones: bool = True) -> PositionsTable:
     positions: dict[str, SquarePosition] = {}
     keys = list(ALL_SQUARES)
     if include_zones:
-        keys += [config.ZONE_DISCARD, config.ZONE_EXCHANGE]
+        keys += [config.ZONE_DISCARD, config.ZONE_EXCHANGE, config.ZONE_PARK]
     for i, key in enumerate(keys):
         positions[key] = SquarePosition(
             approach=JointAngles(shoulder=FAKE_VALUE + i, elbow=-FAKE_VALUE - i),
@@ -202,6 +212,7 @@ class PositionsReport:
     missing: list[str] = field(default_factory=list)      # ausentes o con null
     invalid: list[str] = field(default_factory=list)      # mal formadas
     unknown: list[str] = field(default_factory=list)      # claves que no son casilla/zona
+    has_park: bool = False                                # zona de reposo grabada
 
     @property
     def total(self) -> int:
@@ -209,7 +220,11 @@ class PositionsReport:
 
     @property
     def complete(self) -> bool:
-        """``True`` si la tabla sirve para jugar (64 casillas + 2 zonas)."""
+        """``True`` si la tabla sirve para jugar (64 casillas + 2 zonas).
+
+        La zona de reposo NO cuenta: sin ella se juega igual, solo que el brazo
+        se queda donde termine la jugada (ver :attr:`has_park`).
+        """
         return self.exists and self.error is None and not self.missing and not self.invalid
 
     def to_dict(self) -> dict:
@@ -223,6 +238,7 @@ class PositionsReport:
             "missing": list(self.missing),
             "invalid": list(self.invalid),
             "unknown": list(self.unknown),
+            "has_park": self.has_park,
         }
 
 
@@ -277,5 +293,6 @@ def inspect_positions_file(path: Union[str, Path]) -> PositionsReport:
             report.missing.append(key)
         else:
             report.invalid.append(key)
-    report.unknown = [k for k in raw if k not in REQUIRED_KEYS]
+    report.unknown = [k for k in raw if k not in RECORDABLE_KEYS]
+    report.has_park = _entry_is_calibrated(raw.get(config.ZONE_PARK)) is True
     return report

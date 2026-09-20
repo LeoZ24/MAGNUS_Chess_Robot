@@ -176,6 +176,44 @@ mientras el host piensa o mueve la garra, sin bucles de corrección. Reglas:
 - Si el firmware no trae `EM_lock`, el cliente lo dice con un error claro antes
   de mover nada, en vez de fallar a media jugada.
 
+### ⚠️ Si el encoder llega pero el brazo NO
+
+Síntoma: el brazo se queda corto **una o dos casillas y no salta ningún error**.
+Eso descarta la falta de par: `MOVE_FAIL_DEG` es 3°, y una casilla son ~10° de
+hombro, así que si no hubo `ERR` es que **el encoder sí llegó**. El motor giró
+lo que se le dijo; lo que no llegó es la punta.
+
+El fallo está **después del eje del motor**: flexión de la estructura, juego en
+la transmisión o patinaje. Y tiene una consecuencia que no es obvia:
+
+> **Una tabla grabada colocando el brazo a mano miente.** Con los motores
+> sueltos el brazo no aguanta su propio peso igual que cuando lo empujan los
+> motores. El mismo ángulo de encoder deja la punta en dos sitios distintos.
+> Por eso se queda corto siempre en el mismo sentido y sin avisar.
+
+La solución es grabar la tabla **con los motores puestos**:
+
+```bash
+python3 examples/record_arm_positions.py --all --jog
+```
+
+En modo `--jog` el brazo se mueve solo y se ajusta a pasos (`h+5`, `c-3`) hasta
+que la punta cae en la casilla; lo que se guarda es la **orden**, no la medida,
+con la flexión ya dentro. Es la misma orden que se mandará jugando.
+
+### El segundo motor del hombro (geekservo)
+
+El hombro lleva un geekservo rojo además del motor encoder, puesto para
+sostener el brazo. ⚠️ Un motor con reductora **sin alimentar no es un
+rodamiento: frena**, y ese freno se lo come el motor encoder.
+
+`ASSIST_ENABLED` en el cliente lo hace empujar en el mismo sentido que el
+hombro durante el tramo grueso (en el último tramo no: ahí se busca precisión y
+un segundo actuador de fondo se comería el medio grado que se está afinando).
+Viene **desactivado**: hay que poner antes `ASSIST_PORT` y `ASSIST_KIND` con lo
+que esté conectado de verdad, y comprobar `ASSIST_SIGN` despacio — invertido,
+los dos actuadores pelean entre sí.
+
 ### Orden de los ejes y verificación final
 
 `MOVE` mueve **primero el hombro y luego el codo** (`MOVE_SHOULDER_FIRST`): se
@@ -233,6 +271,23 @@ approach(e2) → engage(e2) → [activar garra] → approach(e2)
 Una captura, enroque, captura al paso o promoción necesitan secuencias
 compuestas de varias de estas — usa los campos de `MoveResponse` (ver más
 abajo) para decidir qué sub-secuencias encadenar.
+
+### Zona de reposo (`park`) — el brazo se retira al terminar
+
+Además de las 64 casillas y de `discard`/`exchange`, la tabla admite la clave
+**`park`**: una pose **fuera del tablero**. `ArmNode.plan()` la añade como
+último paso de *toda* jugada, porque un brazo plantado donde terminó la jugada
+le estorba al rival y le tapa el tablero a la cámara — que es justo como la
+visión se entera de la jugada siguiente.
+
+Es **opcional a propósito**: si fuese obligatoria, las tablas ya grabadas
+pasarían a estar "incompletas" y la interfaz dejaría de permitir el brazo real
+hasta recalibrar. Sin ella se juega igual, solo que el brazo no se aparta (y
+queda un aviso en el log). Para grabarla:
+
+```bash
+python3 examples/record_arm_positions.py park --jog
+```
 
 **No tienes el archivo `positions.json` todavía.** No lo inventes con datos
 ficticios salvo que sea explícitamente para un test (`FakeArmBackend`) — en

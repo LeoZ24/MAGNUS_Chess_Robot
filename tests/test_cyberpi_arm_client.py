@@ -90,6 +90,9 @@ class FakeMbot2:
         assert not self.locked[port], "No resetear un encoder con un objetivo viejo"
         self.angles[port] = 0.0
 
+    def motor_set(self, power, port):
+        self.events.append(("assist", power, port))
+
     def EM_set_power(self, power, port):
         assert not self.locked[port], "No empujar contra la retencion"
         self.events.append(("power", power, port))
@@ -380,3 +383,49 @@ def test_an_axis_that_nothing_can_move_still_gives_up(client):
     hardware.power_gain = 0.0
     with pytest.raises(ValueError, match="hombro no alcanzo"):
         module.handle("MOVE 30 -20")
+
+
+# --------------------------------------------------------------------------- #
+# Ayuda del geekservo del hombro (opcional)
+# --------------------------------------------------------------------------- #
+
+def test_assist_is_off_by_default(client):
+    """Desactivada mientras no se sepa en que puerto esta el geekservo.
+
+    Inventarse el puerto o el nombre de la API moveria un actuador real a
+    ciegas; es justo lo que este proyecto no hace.
+    """
+    module, hardware = client
+    assert module.ASSIST_ENABLED is False
+    module.handle("MOVE 30 -20")
+    assert not any(event[0] == "assist" for event in hardware.events)
+
+
+def test_assist_pushes_with_the_shoulder_and_stops_after(client):
+    """Empuja en el sentido del movimiento y se para al terminar."""
+    module, hardware = client
+    module.ASSIST_ENABLED = True
+    module.handle("MOVE 30 -20")
+    empujes = [event for event in hardware.events if event[0] == "assist"]
+    assert empujes, "no empujo nada"
+    assert empujes[0][1] > 0            # el hombro va a +30: ayuda en positivo
+    assert empujes[-1][1] == 0          # y queda parado
+
+
+def test_assist_only_helps_the_shoulder(client):
+    """El codo no lleva geekservo: no hay nada que empujar por el."""
+    module, hardware = client
+    module.ASSIST_ENABLED = True
+    module._move_axis(-20.0, module.ELBOW_PORT, module.ELBOW_LIM, "codo")
+    assert not any(event[0] == "assist" for event in hardware.events)
+
+
+def test_assist_stops_even_if_the_shoulder_fails(client):
+    """Un fallo a media jugada no puede dejar el geekservo empujando solo."""
+    module, hardware = client
+    module.ASSIST_ENABLED = True
+    hardware.fraction = 0.0
+    with pytest.raises(ValueError):
+        module.handle("MOVE 30 -20")
+    empujes = [event for event in hardware.events if event[0] == "assist"]
+    assert empujes and empujes[-1][1] == 0

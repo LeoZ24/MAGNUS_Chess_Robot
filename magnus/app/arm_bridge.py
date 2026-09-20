@@ -24,6 +24,7 @@ import threading
 import time
 from typing import Callable, Optional
 
+from .. import config
 from ..arm.arm_node import ArmNode, ArmNodeError, ArmStep
 from ..arm.backend import ArmBackend, ArmBackendError, CyberPiBackend, FakeArmBackend
 from ..arm.positions_table import (
@@ -50,12 +51,19 @@ STEP_LABELS = {
 
 ZONE_LABELS = {"discard": "zona de descarte", "exchange": "zona de intercambio"}
 
+# La retirada no se describe como "mover a <sitio>": lo que le importa a quien
+# mira la pantalla es que el brazo deja el tablero libre.
+STEP_OVERRIDES = {("move", config.ZONE_PARK): "Retirarse del tablero"}
+
 
 class ArmStopped(ArmNodeError):
     """La ejecución se abortó desde la interfaz (botón de parada)."""
 
 
 def describe_step(step: ArmStep) -> str:
+    override = STEP_OVERRIDES.get((step.action, step.target or ""))
+    if override is not None:
+        return override
     target = ZONE_LABELS.get(step.target or "", step.target or "")
     return STEP_LABELS.get(step.action, step.action).format(target=target)
 

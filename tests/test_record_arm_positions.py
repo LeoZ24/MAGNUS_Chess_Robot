@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from examples import record_arm_positions as recorder
 from magnus.arm.backend import FakeArmBackend
-from magnus.arm.positions_table import REQUIRED_KEYS, PositionsTable
+from magnus.arm.positions_table import RECORDABLE_KEYS, REQUIRED_KEYS, PositionsTable
 
 
 class FakeRecorderBackend(FakeArmBackend):
@@ -28,8 +28,9 @@ def test_one_reading_per_square_can_be_loaded(capsys):
          patch.object(recorder.sys, "argv", ["record_arm_positions.py", "--all"]), \
          patch("builtins.input", return_value="") as prompt:
         assert recorder.main() == 0
-    assert prompt.call_count == 2 + len(REQUIRED_KEYS)
-    assert backend.commands.count(("get",)) == len(REQUIRED_KEYS)
+    # --all cubre tambien la zona de reposo, que es opcional pero grabable.
+    assert prompt.call_count == 2 + len(RECORDABLE_KEYS)
+    assert backend.commands.count(("get",)) == len(RECORDABLE_KEYS)
     assert backend.commands[:3] == [("connect",), ("home",), ("stop",)]
     assert backend.commands[-2:] == [("stop",), ("disconnect",)]
     assert not any(cmd[0] in ("move_to", "gripper") for cmd in backend.commands)

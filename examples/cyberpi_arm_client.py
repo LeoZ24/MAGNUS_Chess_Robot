@@ -114,6 +114,25 @@ HOLD_ENABLED       = True
 # giro, asi que barre menos tablero.
 MOVE_SHOULDER_FIRST = True
 
+# --- Ayuda del hombro con el geekservo (OPCIONAL, desactivada) ---
+# En el hombro hay un segundo actuador: un geekservo rojo que esta puesto para
+# sostener el brazo, como un rodamiento. El problema es que un motor con
+# reductora SIN alimentar no es un rodamiento: FRENA. Todo lo que el brazo
+# flexiona y todo el par que le falta al motor encoder salen en parte de ahi.
+#
+# Con esto activado, el geekservo empuja en el MISMO sentido que el hombro
+# mientras dura el tramo grueso, asi que deja de restar y pasa a sumar.
+#
+# ⚠️ ANTES DE PONERLO A True hay que rellenar ASSIST_PORT y ASSIST_KIND con lo
+# que de verdad tengas conectado, y comprobar ASSIST_SIGN a mano y despacio: un
+# signo invertido hace que los dos actuadores peleen entre si.
+ASSIST_ENABLED = False
+ASSIST_PORT    = "M1"     # donde esta enchufado el geekservo
+ASSIST_KIND    = "dc"     # "dc" = 2 cables en puerto de motor (M1/M2)
+                          # "servo360" = 3 cables en puerto de servo (S2...)
+ASSIST_POWER   = 35       # % de empuje (empieza bajo y sube)
+ASSIST_SIGN    = 1        # +1 o -1: sentido en el que AYUDA al hombro
+
 # Juego de la transmision (backlash). Si el brazo no repite al llegar a un
 # angulo desde un lado o desde el otro, sube esto: el ultimo tramo entrara
 # siempre en el mismo sentido (APPROACH_SIGN). 0 = desactivado.
@@ -223,9 +242,42 @@ def _hw_stop_axis(port):
 
 def _hw_stop():
     _hw_stop_axis("all")
+    if ASSIST_ENABLED:
+        try:
+            _hw_assist(0)
+        except Exception:
+            pass        # parar los ejes principales importa mas que esto
 
 def _hw_servo(angle):
     cyberpi.mbot2.servo_set(angle, GRIPPER_PORT)
+
+def _hw_assist(power_pct):
+    # TODO(verificar en mBlock): el nombre exacto depende de donde este
+    # enchufado el geekservo. Esta aislado aqui a proposito, como el resto de
+    # los _hw_*: si el autocompletado da otro nombre, se cambia SOLO esta
+    # funcion y el resto del cliente no se entera.
+    if ASSIST_KIND == "servo360":
+        # Geekservo de rotacion continua: 90 = parado, y separarse de 90 marca
+        # sentido y velocidad.
+        cyberpi.mbot2.servo_set(90 + power_pct * 0.9, ASSIST_PORT)
+        return
+    drive = getattr(cyberpi.mbot2, "motor_set", None)
+    if drive is None:
+        raise ValueError("motor_set no disponible: comprueba ASSIST_KIND y el "
+                         "puerto del geekservo, o pon ASSIST_ENABLED=False")
+    drive(power_pct, ASSIST_PORT)
+
+
+def _assist(direction):
+    """Empuja (o para) el geekservo del hombro. ``direction`` es +1, -1 o 0.
+
+    Solo acompana al tramo grueso. En el ultimo tramo NO: ahi se busca
+    precision con impulsos pequenos, y un segundo actuador empujando de fondo
+    se comeria justo el medio grado que se esta intentando afinar.
+    """
+    if not ASSIST_ENABLED:
+        return
+    _hw_assist(ASSIST_POWER * ASSIST_SIGN * direction)
 
 
 def _log(text):
@@ -372,7 +424,14 @@ def _move_axis(target, port, lim, name):
         _hw_turn(pre - start, MOVE_SPEED_RPM, port)
         time.sleep(MOVE_SETTLE_S)
 
-    current = _drive_turns(target, port, _hw_get_angle(port), name)
+    current = _hw_get_angle(port)
+    if port == SHOULDER_PORT and abs(target - current) > TOLERANCE_DEG:
+        _assist(1 if target > current else -1)
+    try:
+        current = _drive_turns(target, port, current, name)
+    finally:
+        if port == SHOULDER_PORT:
+            _assist(0)      # que un fallo no deje el geekservo empujando
     if abs(target - current) > TOLERANCE_DEG:
         current = _creep_to(target, port, name)
 

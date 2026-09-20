@@ -9,7 +9,11 @@ La planificación (:meth:`ArmNode.plan`) está separada de la ejecución
 
 Secuencia básica de "levantar y colocar" (pick & place) de ``X`` a ``Y``::
 
-    move(X) -> garra ON -> move(Y) -> garra OFF
+    move(X) -> garra ON -> move(Y) -> garra OFF -> move(park)
+
+El ``move(park)`` final retira el brazo fuera del tablero: si se queda donde
+terminó la jugada, le estorba al rival y le tapa el tablero a la cámara.  Solo
+se añade si ``park`` está grabado en la tabla (es opcional).
 
 Hombro y codo no suben ni bajan: hay una sola posición por casilla.
 S1 recoge y suelta la pieza. Cada jugada empieza devolviendo S1 a reposo.
@@ -162,6 +166,20 @@ class ArmNode:
                     f"Enroque sin rook_from/rook_to en {resp.uci!r}."
                 )
             steps += _pick_and_place(resp.rook_from, resp.rook_to)
+
+        # 4. Retirarse del tablero. Plantado donde termino la jugada, el brazo
+        #    le estorba al rival y le tapa el tablero a la camara, que es como
+        #    la vision se entera de la jugada siguiente.
+        #    Es opcional: sin `park` grabado se juega igual (ver ZONE_PARK).
+        if self._table.has(config.ZONE_PARK):
+            steps.append(ArmStep("move", config.ZONE_PARK))
+        else:
+            logger.warning(
+                "Sin posicion de reposo (%r) en la tabla: el brazo se quedara "
+                "donde termine la jugada, tapando el tablero. Grabala con "
+                "`python3 examples/record_arm_positions.py park`.",
+                config.ZONE_PARK,
+            )
 
         # Verificar que todas las posiciones existen en la tabla ANTES de
         # ejecutar nada (mejor fallar en seco que a mitad de jugada).
