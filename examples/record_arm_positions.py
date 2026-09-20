@@ -47,6 +47,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from magnus.arm.backend import ArmBackendError, CyberPiBackend  # noqa: E402
 from magnus.arm.positions_table import RECORDABLE_KEYS  # noqa: E402
 
+POSITIONS_PATH = Path(__file__).resolve().parents[1] / "magnus" / "arm" / "positions.json"
+
 
 def _check_angles(shoulder: float, elbow: float, limits) -> None:
     """Rechaza una lectura imposible antes de dejarla entrar en la tabla."""
@@ -75,6 +77,30 @@ def _load_seeds(path: Path) -> dict:
                 except (TypeError, ValueError):
                     pass
     return seeds
+
+
+def _write_positions(path: Path, captured: dict) -> Path:
+    """Fusiona lo grabado en positions.json y devuelve la ruta de la copia.
+
+    Fusiona, no reemplaza: grabar dos casillas no puede borrar las otras 64.
+    Y siempre deja un .bak antes de tocar nada, porque recalibrar una tabla
+    entera son horas de brazo y aquí se sobrescribe en un segundo.
+    """
+    backup = path.with_name(path.name + ".bak")
+    existing: dict = {}
+    if path.exists():
+        original = path.read_text(encoding="utf-8")
+        backup.write_text(original, encoding="utf-8")
+        try:
+            loaded = json.loads(original)
+        except ValueError:
+            loaded = None
+        if isinstance(loaded, dict):
+            existing = loaded
+    existing.update(captured)
+    path.write_text(json.dumps(existing, indent=2, ensure_ascii=False) + "\n",
+                    encoding="utf-8")
+    return backup
 
 
 JOG_HELP = """
@@ -106,30 +132,49 @@ def _jog_capture(backend, squares, limits, seeds, captured) -> None:
         if target is None:
             target = backend.get_position()
         shoulder, elbow = target
+        # Último par de ángulos que la placa aceptó. Si un ajuste se sale de
+        # límites se vuelve AQUÍ, no a la lectura del encoder: la orden y el
+        # encoder no son lo mismo, y es justo esa diferencia (la flexión) lo
+        # que este modo existe para capturar. Volver al encoder la tiraría.
+        accepted = (shoulder, elbow)
         print(f"\n--- {square} ---")
         while True:
             try:
                 _check_angles(shoulder, elbow, limits)
                 backend.move_to(shoulder, elbow)
+                accepted = (shoulder, elbow)
             except ArmBackendError as exc:
                 print(f"   Rechazado: {exc}")
-                shoulder, elbow = backend.get_position()
+                shoulder, elbow = accepted
             reached = backend.get_position()
             print(f"   orden: hombro {shoulder:+.1f}  codo {elbow:+.1f}"
                   f"   (encoder: {reached[0]:+.1f} {reached[1]:+.1f})")
-            orden = input("   ajuste (h±/c±, Enter graba, s salta, q sale): ").strip().lower()
+            orden = input("   ajuste (h±/c±, Enter GRABA, s salta, q sale): ").strip().lower()
             if orden == "":
                 _check_angles(shoulder, elbow, limits)
                 # Se graba la ORDEN, no el encoder: es lo que se mandará jugando,
                 # y reproducirla deja la punta donde está ahora.
                 angles = {"shoulder": round(shoulder, 2), "elbow": round(elbow, 2)}
                 captured[square] = angles
-                print(f'   "{square}": {json.dumps(angles, allow_nan=False)}', flush=True)
+                print(f'   grabada {square}: {json.dumps(angles, allow_nan=False)}', flush=True)
                 break
             if orden == "s":
-                print("   saltada.")
+                print("   saltada (no se graba).")
                 break
             if orden == "q":
+                # Salir aquí tiraría todo el ajuste de esta posición, que es lo
+                # que más cuesta de conseguir. Mejor preguntar que perderlo.
+                if square not in captured:
+                    print(f"   Vas a salir SIN grabar {square}.")
+                    respuesta = input("   Enter la graba y sale, 'q' sale sin "
+                                      "grabarla: ").strip().lower()
+                    if respuesta != "q":
+                        _check_angles(shoulder, elbow, limits)
+                        angles = {"shoulder": round(shoulder, 2),
+                                  "elbow": round(elbow, 2)}
+                        captured[square] = angles
+                        print(f'   grabada {square}: '
+                              f'{json.dumps(angles, allow_nan=False)}', flush=True)
                 raise KeyboardInterrupt
             eje, _, cantidad = orden.partition("+") if "+" in orden else orden.partition("-")
             signo = 1.0 if "+" in orden else -1.0
@@ -155,6 +200,9 @@ def main() -> int:
     parser.add_argument("--all", action="store_true", dest="all_squares",
                         help="Recorrer las 64 casillas y las zonas discard/exchange")
     parser.add_argument("--port", type=int, default=5555, help="Puerto TCP (5555)")
+    parser.add_argument("--write", action="store_true",
+                        help="Fusionar lo grabado en positions.json (guarda "
+                             "antes una copia .bak). Sin esto solo se imprime")
     parser.add_argument("--jog", action="store_true",
                         help="Grabar MOVIENDO el brazo con los motores en vez "
                              "de colocarlo a mano (recomendado, ver abajo)")
@@ -193,9 +241,8 @@ def main() -> int:
         print(f"\nLímites en grados: hombro {limits[0]}, codo {limits[1]}.")
 
         if args.jog:
-            seeds = _load_seeds(
-                Path(__file__).resolve().parents[1] / "magnus" / "arm" / "positions.json")
-            _jog_capture(backend, squares, limits, seeds, captured)
+            _jog_capture(backend, squares, limits, _load_seeds(POSITIONS_PATH),
+                         captured)
         else:
             print("Coloca a mano ambos ejes y mantenlos quietos al pulsar Enter.")
             for square in squares:
@@ -221,9 +268,23 @@ def main() -> int:
         finally:
             backend.disconnect()
         if captured:
-            print("\nMediciones para copiar (pueden estar incompletas):")
+            print("\nMediciones (pueden estar incompletas):")
             print(json.dumps(captured, indent=2, allow_nan=False))
-            print("Copia estas entradas en positions.json conservando las demás.")
+            if args.write:
+                try:
+                    backup = _write_positions(POSITIONS_PATH, captured)
+                except OSError as exc:
+                    print(f"No pude escribir {POSITIONS_PATH}: {exc}",
+                          file=sys.stderr)
+                    print("Copia las entradas de arriba a mano.", file=sys.stderr)
+                    status = 1
+                else:
+                    print(f"\nFusionadas {len(captured)} entradas en "
+                          f"{POSITIONS_PATH}")
+                    print(f"Copia de seguridad de la tabla anterior: {backup}")
+            else:
+                print("Copia estas entradas en positions.json conservando las "
+                      "demás, o repite con --write para que lo haga solo.")
     return status
 
 

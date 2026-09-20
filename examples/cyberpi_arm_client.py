@@ -123,15 +123,22 @@ MOVE_SHOULDER_FIRST = True
 # Con esto activado, el geekservo empuja en el MISMO sentido que el hombro
 # mientras dura el tramo grueso, asi que deja de restar y pasa a sumar.
 #
-# ⚠️ ANTES DE PONERLO A True hay que rellenar ASSIST_PORT y ASSIST_KIND con lo
-# que de verdad tengas conectado, y comprobar ASSIST_SIGN a mano y despacio: un
-# signo invertido hace que los dos actuadores peleen entre si.
-ASSIST_ENABLED = False
-ASSIST_PORT    = "M1"     # donde esta enchufado el geekservo
-ASSIST_KIND    = "dc"     # "dc" = 2 cables en puerto de motor (M1/M2)
-                          # "servo360" = 3 cables en puerto de servo (S2...)
+# Puerto y tipo ya CONFIRMADOS con el montaje real: geekservo de 2 cables en
+# M1. Lo unico que queda por comprobar en el brazo es ASSIST_SIGN.
+#
+# ⚠️ COMO ACTIVARLO SIN ROMPER NADA:
+#   1. Pon ASSIST_ENABLED = True y sube el cliente.
+#   2. Manda UN solo movimiento de hombro, con la mano cerca del interruptor.
+#   3. Si el hombro va MEJOR que antes, el signo es el bueno. Si pelea, vibra o
+#      va peor, cambia ASSIST_SIGN a -1. No hay tercera opcion.
+#   4. Con el signo bien, sube ASSIST_POWER poco a poco.
+# Con el signo invertido los dos actuadores empujan en sentidos contrarios y se
+# calientan sin mover el brazo: no lo dejes asi "a ver si mejora".
+ASSIST_ENABLED = False    # <- lo unico que hay que cambiar para probarlo
+ASSIST_PORT    = "M1"     # CONFIRMADO: geekservo de 2 cables en M1
+ASSIST_KIND    = "dc"     # CONFIRMADO: 2 cables = puerto de motor
 ASSIST_POWER   = 35       # % de empuje (empieza bajo y sube)
-ASSIST_SIGN    = 1        # +1 o -1: sentido en el que AYUDA al hombro
+ASSIST_SIGN    = 1        # +1 o -1: sentido en el que AYUDA al hombro (ver arriba)
 
 # Juego de la transmision (backlash). Si el brazo no repite al llegar a un
 # angulo desde un lado o desde el otro, sube esto: el ultimo tramo entrara
@@ -252,10 +259,12 @@ def _hw_servo(angle):
     cyberpi.mbot2.servo_set(angle, GRIPPER_PORT)
 
 def _hw_assist(power_pct):
-    # TODO(verificar en mBlock): el nombre exacto depende de donde este
-    # enchufado el geekservo. Esta aislado aqui a proposito, como el resto de
-    # los _hw_*: si el autocompletado da otro nombre, se cambia SOLO esta
-    # funcion y el resto del cliente no se entera.
+    # ⚠️ TODO(verificar en mBlock): el geekservo esta en M1, que NO es un puerto
+    # de motor encoder (esos son EM1/EM2, ya ocupados por hombro y codo), asi
+    # que no se maneja con las EM_*. Comprueba en el autocompletado de mBlock
+    # como se llama el control de un motor DC normal. Esta aislado aqui a
+    # proposito, como el resto de los _hw_*: si el nombre es otro, se cambia
+    # SOLO esta funcion y el resto del cliente no se entera.
     if ASSIST_KIND == "servo360":
         # Geekservo de rotacion continua: 90 = parado, y separarse de 90 marca
         # sentido y velocidad.

@@ -194,12 +194,19 @@ la transmisión o patinaje. Y tiene una consecuencia que no es obvia:
 La solución es grabar la tabla **con los motores puestos**:
 
 ```bash
-python3 examples/record_arm_positions.py --all --jog
+python3 examples/record_arm_positions.py --all --jog --write
 ```
 
 En modo `--jog` el brazo se mueve solo y se ajusta a pasos (`h+5`, `c-3`) hasta
 que la punta cae en la casilla; lo que se guarda es la **orden**, no la medida,
 con la flexión ya dentro. Es la misma orden que se mandará jugando.
+
+- **`Enter` graba**; `s` salta; `q` sale (y pregunta antes de tirar el ajuste).
+- Si un ajuste se sale de límites se vuelve a la **última orden aceptada**, no
+  a la lectura del encoder: la diferencia entre las dos ES la flexión que este
+  modo existe para capturar.
+- `--write` fusiona en `positions.json` dejando un `.bak`. **Fusiona**: grabar
+  dos casillas no borra las otras 64. Sin `--write` solo imprime el JSON.
 
 ### El segundo motor del hombro (geekservo)
 
@@ -210,9 +217,16 @@ rodamiento: frena**, y ese freno se lo come el motor encoder.
 `ASSIST_ENABLED` en el cliente lo hace empujar en el mismo sentido que el
 hombro durante el tramo grueso (en el último tramo no: ahí se busca precisión y
 un segundo actuador de fondo se comería el medio grado que se está afinando).
-Viene **desactivado**: hay que poner antes `ASSIST_PORT` y `ASSIST_KIND` con lo
-que esté conectado de verdad, y comprobar `ASSIST_SIGN` despacio — invertido,
-los dos actuadores pelean entre sí.
+
+Puerto y tipo **confirmados con el montaje real**: geekservo de 2 cables en
+`M1` (que no es un puerto de motor encoder — esos son `EM1`/`EM2`, ocupados por
+hombro y codo — así que no se maneja con las `EM_*`; verificar el nombre en el
+autocompletado de mBlock).
+
+Viene **desactivado**. Lo único por comprobar en el brazo es `ASSIST_SIGN`:
+manda un solo movimiento de hombro con la mano cerca del interruptor. Si va
+mejor, el signo es bueno; si pelea, vibra o va peor, ponlo a `-1`. Invertido,
+los dos actuadores empujan en contra y se calientan sin mover el brazo.
 
 ### Orden de los ejes y verificación final
 
