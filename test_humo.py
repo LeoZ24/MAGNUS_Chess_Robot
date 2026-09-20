@@ -17,7 +17,8 @@ QUE HACE:
        Con --sin-topes vuelve al metodo viejo: colocar el brazo y pulsar Enter.
     2. Prueba de par por eje: manda un angulo y COMPARA con lo que llego a
        moverse. Si el error es grande, imprime el diagnostico probable en vez
-       de dejarte adivinando.
+       de dejarte adivinando. Mide ambos ejes otra vez tras 3 s de reposo para
+       distinguir falta de recorrido de falta de retencion.
     3. Repetibilidad del cero: referencia otra vez y repite el mismo angulo
        para que compruebes a ojo si el brazo cae en el mismo sitio.
     4. Garra.
@@ -50,6 +51,7 @@ from magnus.arm.backend import ArmBackendError
 
 ANGULO_PRUEBA = 30.0    # grados de motor
 ERROR_OK_DEG = 2.0      # error por debajo del cual damos el eje por bueno
+HOLD_TEST_S = 3.0       # observacion acotada de la retencion, sin mover nada
 
 
 def paso(descripcion):
@@ -74,18 +76,17 @@ def _diagnostico(nombre, pedido, logrado):
         print("     2. Tope mecanico o cable tirando en ese sentido.")
         print("     3. Placa con un cliente viejo: el actual sube solo la "
               "velocidad")
-        print("        cuando una pasada se queda corta y remata a impulsos "
-              "de potencia.")
+        print("        cuando una pasada se queda corta y remata a impulsos de "
+              "potencia.")
         print("        Vuelve a subir examples/cyberpi_arm_client.py desde "
               "mBlock.")
     else:
-        print(f"   PARCIAL: el {nombre} se quedo corto pese a los impulsos de")
-        print("     potencia del ultimo tramo. Sube CREEP_POWER_MAX (y si hace "
-              "falta")
-        print("     MOVE_SPEED_MAX_RPM) en el cliente CyberPi, y comprueba la "
-              "bateria:")
-        print("     un shield flojo se nota antes aqui que en ningun otro "
-              "sitio.")
+        print(f"   PARCIAL: el {nombre} no llego pese a la escalada de "
+              "velocidad y")
+        print("     a los impulsos de potencia del ultimo tramo. Revisa "
+              "bateria, carga")
+        print("     y retencion; despues sube CREEP_POWER_MAX o "
+              "MOVE_SPEED_MAX_RPM.")
     print("   OJO: si el ENCODER marca el angulo correcto pero el brazo casi "
           "no se mueve,")
     print("   el problema no es electrico sino de transmision (revisa que el "
@@ -117,19 +118,64 @@ def angulo_seguro(magnitud, limites, nombre):
     return elegido
 
 
-def probar_eje(arm, nombre, indice, angulo):
-    """Manda un movimiento de un solo eje y mide lo que llego a moverse."""
+def _move_with_diagnostics(arm: CyberPiBackend, target: list[float]) -> None:
+    """Muestra el error fisico aunque MOVE rechace el movimiento; luego aborta."""
+    try:
+        arm.move_to(shoulder=target[0], elbow=target[1])
+    except ArmBackendError as exc:
+        # Solo consultar tras un ERR fisico completo. Un timeout puede dejar
+        # un ACK pendiente: no enviar GET sobre un protocolo desincronizado.
+        if "ERR " in str(exc) and ("no alcanzo" in str(exc) or "no mantuvo" in str(exc)):
+            print(f"   La placa detecto un fallo: {exc}")
+            try:
+                position = arm.get_position()
+            except ArmBackendError:
+                pass
+            else:
+                for index, name in enumerate(("hombro", "codo")):
+                    _diagnostico(name, target[index], position[index])
+            print("   Prueba interrumpida; no se ordenan mas movimientos.")
+        raise
+
+
+def _check_hold(arm: CyberPiBackend, target: list[float],
+                initial: tuple[float, float]) -> bool:
+    """Observa deriva y error de ambos ejes durante una pausa finita."""
+    print(f"   Comprobando retencion durante {HOLD_TEST_S:.0f} s; no toques el brazo...")
+    time.sleep(HOLD_TEST_S)
+    final = arm.get_position()
+    ok = True
+    for index, name in enumerate(("hombro", "codo")):
+        drift = final[index] - initial[index]
+        error = target[index] - final[index]
+        print(f"   Reposo {name}: {final[index]:+.2f}°, "
+              f"deriva {drift:+.2f}°, error {error:+.2f}°")
+        if abs(drift) > ERROR_OK_DEG or abs(error) > ERROR_OK_DEG:
+            ok = False
+    if not ok:
+        print("   FALLO de posicion en reposo: comprueba que subiste el cliente")
+        print("   nuevo con HOLD_ENABLED=True; revisa bateria y carga mecanica.")
+    return ok
+
+
+def probar_eje(arm: CyberPiBackend, nombre: str, indice: int, angulo: float) -> bool:
+    """Comprueba llegada, retencion y retorno de los DOS ejes."""
     objetivo = [0.0, 0.0]
     objetivo[indice] = angulo
     paso(f"Mover el {nombre.upper()} a {angulo:+.1f}° (el otro eje se queda en 0)")
-    arm.move_to(shoulder=objetivo[0], elbow=objetivo[1])
+    _move_with_diagnostics(arm, objetivo)
     pos = arm.get_position()
-    ok = _diagnostico(nombre, angulo, pos[indice])
+    ok = True
+    for index, name in enumerate(("hombro", "codo")):
+        ok = _diagnostico(name, objetivo[index], pos[index]) and ok
+    ok = _check_hold(arm, objetivo, pos) and ok
 
     paso(f"Regresar el {nombre.upper()} a 0°")
-    arm.move_to(shoulder=0.0, elbow=0.0)
+    _move_with_diagnostics(arm, [0.0, 0.0])
     pos = arm.get_position()
     print(f"   De vuelta en hombro={pos[0]:.2f}  codo={pos[1]:.2f}")
+    for index, name in enumerate(("hombro", "codo")):
+        ok = _diagnostico(name, 0.0, pos[index]) and ok
     return ok
 
 
@@ -203,7 +249,8 @@ def main():
 
         if ok_codo and ok_hombro:
             print("\n=== TEST DE HUMO CON MOTORES OK ===")
-            print("Hombro, codo y garra llegaron a donde se les pidio.")
+            print("Hombro y codo llegaron y mantuvieron la posicion durante la prueba.")
+            print("Los comandos de la garra terminaron; comprueba su movimiento a ojo.")
         else:
             print("\n=== TEST DE HUMO CON AVISOS ===")
             print("Algun eje no llego. Revisa el diagnostico de arriba antes")

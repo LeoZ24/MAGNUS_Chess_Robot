@@ -14,14 +14,18 @@ Uso:
     python3 play.py --host 0.0.0.0        # controlar desde una tablet/móvil del hotspot
     python3 play.py --kiosk               # pantalla completa para la feria
     python3 play.py --no-engine --no-voice
+    python3 play.py --arm cyberpi --arm-auto   # brazo real, jugadas automáticas
+    python3 play.py --arm cyberpi --arm-manual # ejecutar cada jugada con el botón
 
 Los ajustes que se cambian desde la interfaz se guardan en
 ``magnus_settings.json`` (cámbialo con --settings) y se recuperan al arrancar.
 Los argumentos de línea de comandos tienen prioridad sobre el archivo.
 
-Brazo: mientras no exista ``magnus/arm/positions.json`` (la tabla calibrada),
-la interfaz solo ofrece los modos "apagado" y "simulado".  Cuando la tabla
-esté completa, basta con elegir "CyberPi" en Ajustes > Brazo.
+Brazo: los ajustes del proyecto usan CyberPi, HOME y ejecución automática con
+``magnus/arm/positions.json``. Cierra el script de calibración antes de jugar.
+La partida empieza con el botón del panel. Sin garra, mueve la pieza a mano
+después del recorrido del brazo: la cámara debe confirmar cada jugada.
+``--synthetic`` usa brazo simulado salvo que se indique ``--arm`` explícitamente.
 """
 
 from __future__ import annotations
@@ -70,6 +74,12 @@ def main() -> int:
                         help="Color que juega el robot")
     parser.add_argument("--arm", choices=list(ARM_MODES), default=None,
                         help="Modo inicial del brazo")
+    execution = parser.add_mutually_exclusive_group()
+    execution.add_argument("--arm-auto", dest="arm_auto_execute", action="store_true",
+                           help="Ejecutar automáticamente cada jugada del robot")
+    execution.add_argument("--arm-manual", dest="arm_auto_execute", action="store_false",
+                           help="Esperar el botón Ejecutar para mover el brazo")
+    parser.set_defaults(arm_auto_execute=None)
     parser.add_argument("--settings", default=DEFAULT_SETTINGS_FILE,
                         help="Archivo de ajustes persistentes")
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -104,8 +114,18 @@ def main() -> int:
         overrides["robot_side"] = args.robot_side
     if args.arm:
         overrides["arm_mode"] = args.arm
+    elif args.synthetic:
+        overrides["arm_mode"] = "simulated"
+        overrides["arm_auto_execute"] = True
+    if args.arm_auto_execute is not None:
+        overrides["arm_auto_execute"] = args.arm_auto_execute
     if overrides:
         settings = settings.update(**overrides)
+
+    if settings.arm_mode == "cyberpi":
+        # La IP del servidor y el progreso de HOME deben verse sin --verbose.
+        logging.getLogger("magnus.arm.backend").setLevel(logging.INFO)
+        logging.getLogger("magnus.app.arm_bridge").setLevel(logging.INFO)
 
     voice_backend = None
     if not args.no_voice and (args.voice_model or args.say_voice):
@@ -136,6 +156,14 @@ def main() -> int:
     print("=" * 64)
     print("  MAGNUS — panel de control")
     print(f"  {url}")
+    print(f"  Brazo: {settings.arm_mode} · "
+          f"{'automático' if settings.arm_auto_execute else 'ejecución con botón'}")
+    if settings.arm_mode == "cyberpi":
+        print(f"  CyberPi: TCP {settings.arm_port} · tabla {settings.positions_path}")
+        if settings.arm_auto_home:
+            print("  Al conectar, HOME moverá el brazo hasta sus topes.")
+        print("  Espera a que el brazo esté listo y pulsa Iniciar partida.")
+        print("  Sin garra: mueve la pieza a mano al terminar el recorrido.")
     if args.host == "0.0.0.0":
         print("  (accesible desde cualquier dispositivo de la red local)")
     print("  Ctrl+C para salir")

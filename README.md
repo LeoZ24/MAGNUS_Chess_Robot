@@ -361,6 +361,39 @@ Cuando conectes S1, ajusta `GRIPPER_ENGAGE_ANGLE` (recoger) y
 `GRIPPER_RELEASE_ANGLE` (posición inicial para soltar) en el cliente CyberPi.
 Sus valores actuales son provisionales; no se graban por casilla ni por pieza.
 
+### Si el hombro se queda corto o el brazo cae entre movimientos
+
+El cliente `examples/cyberpi_arm_client.py` activa la retención nativa
+`EM_lock` (`HOLD_ENABLED=True`) durante `HOME` y `MOVE`. Así los motores
+intentan sostener su posición entre jugadas y mientras se mueve el otro eje
+o la garra. Las correcciones pequeñas del hombro usan `SHOULDER_FINE_RPM=60`;
+el codo conserva sus 40 RPM. Los reintentos siguen limitados a cuatro por eje.
+Al terminar se leen **ambos encoders otra vez**: si el hombro cedió al mover
+el codo, se informa un error en vez de confirmar una posición antigua.
+
+**Hay que volver a subir ese archivo desde mBlock en modo UPLOAD**: reiniciar
+`play.py` no actualiza la placa. Completa los datos Wi-Fi solo en mBlock.
+Si aparece `EM_lock no disponible`, actualiza el firmware de CyberPi/mBot2.
+
+Al arrancar aparece `MAGNUS arm client (retencion)` y se enciende la luz azul
+antes de consultar el Wi-Fi. El cliente arranca directamente: no envolver
+esa sección en `if __name__ == "__main__"`, porque dependería del nombre
+que asigne el cargador. La versión que tenía esa condición podía terminar
+sin mostrar nada ni iniciar la conexión. Sustitúyela por el archivo completo
+actualizado y vuelve a subirlo desde mBlock.
+
+Con `play.py` cerrado y el espacio del brazo despejado, ejecuta
+`python3 test_humo.py`. La prueba muestra llegada, deriva después de tres
+segundos en reposo y retorno a cero, para los dos ejes. Si `MOVE` devuelve un
+error físico, imprime las lecturas y aborta sin ordenar otro movimiento.
+
+`STOP`, los errores de ejecución y el cierre detectado de la conexión
+**liberan los motores**; sostén el brazo al parar o cerrar. Esto mantiene la
+calibración manual con `record_arm_positions.py`. La retención consume energía
+y no garantiza fuerza suficiente bajo cualquier carga: si sigue cediendo con
+la batería cargada, hay que revisar carga y sujeciones antes de calibrar la
+tabla. La precisión real queda pendiente de probar en el montaje físico.
+
 ### Corrección automática de posición (V2 — futuro, no implementar todavía)
 
 Si los movimientos pregrabados resultan imprecisos (por ejemplo, por
@@ -662,6 +695,8 @@ python3 play.py --list-cameras        # ¿qué índice da imagen?
 python3 play.py --host 0.0.0.0        # controlar también desde una tablet/móvil del hotspot
 python3 play.py --kiosk               # pantalla completa sin ajustes (feria)
 python3 play.py --no-engine --no-voice
+python3 play.py --arm cyberpi --arm-auto   # brazo real con ejecución automática
+python3 play.py --arm cyberpi --arm-manual # ejecutar cada jugada con el botón
 ```
 
 Lo que se ve en pantalla:
@@ -687,15 +722,26 @@ Atajos: `G` iniciar partida · `O` observar · `E` ejecutar brazo · `Esc` parad
 
 | Modo | Qué hace | Requisitos |
 |------|----------|------------|
-| Apagado | MAGNUS canta la jugada y el humano mueve la pieza por él | ninguno (modo actual) |
+| Apagado | MAGNUS canta la jugada y el humano mueve la pieza por él | ninguno |
 | Simulado | Muestra la secuencia exacta que ejecutaría el brazo, paso a paso, con backend falso | ninguno |
 | CyberPi | Ejecuta de verdad por TCP (`CyberPiBackend`) | `magnus/arm/positions.json` **completo** (64 casillas + `discard` + `exchange`) |
 
-La interfaz enseña cuántas posiciones están calibradas ("12 de 66") y cuáles
-faltan. Cuando la tabla esté completa, activar el brazo real es: copiar el
-archivo, elegir **CyberPi** y listo. Por seguridad, cada jugada física pide
-pulsar **Ejecutar** (o `E`); en Ajustes se puede activar la ejecución
-automática. El botón rojo **PARADA** (`Esc`) siempre está visible.
+Los ajustes guardados ya activan **CyberPi**, **HOME** al conectar y ejecución
+automática con las 66 posiciones medidas. Cierra el script de calibración,
+enciende la CyberPi con el cliente habitual y ejecuta `python3 play.py` desde
+la carpeta del proyecto. La terminal muestra la IP y el puerto TCP del host.
+Espera a que termine HOME, coloca el tablero inicial y pulsa **Iniciar partida**.
+MAGNUS juega con negras según los ajustes actuales.
+
+Con S1 aún desconectado, el brazo recorre origen y destino y envía igualmente
+las órdenes de recoger/soltar. Después mueve tú la pieza: el panel muestra
+**Recorrido terminado** hasta que la cámara confirme la jugada. No avanza el
+turno ni repite el recorrido solo porque los motores hayan terminado.
+
+**PARADA** (`Esc`) o un fallo desactivan la ejecución automática; tras revisar
+el brazo, puedes ejecutar con el botón o volver a activar el ajuste.
+`--synthetic` usa el brazo simulado aunque los ajustes guardados indiquen CyberPi;
+para combinar tablero simulado y brazo real hay que indicar `--arm cyberpi`.
 
 ### Engine solo (sin hardware)
 

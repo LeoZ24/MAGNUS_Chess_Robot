@@ -158,21 +158,49 @@ camino y `EM_turn` devuelve el control igualmente. Por eso cada `MOVE` tiene
    justo para cubrir `CREEP_AIM` de lo que queda: así el eje converge sin
    cruzar el objetivo, sea el brazo rápido o lento.
 
-Además, `MOVE` mueve **primero el hombro y luego el codo** (`MOVE_SHOULDER_FIRST`)
-y al final **repasa los dos**: al desplegar el codo, el hombro tiene que
-sostener más brazo y puede ceder unos grados después de darlo por bueno.
-Los ángulos realmente alcanzados vuelven en `ACK MOVE <hombro> <codo>`, y si
-alguno se quedó fuera de `MOVE_FAIL_DEG` la placa contesta `ERR`.
+Ojo con el suelo de potencia: si el impulso ideal sale **más corto** que
+`CREEP_PULSE_MIN_S`, no se alarga — se **baja la potencia**. Para moverse menos
+hay que empujar más flojo, no más rato; alargarlo se pasaba de largo con un
+brazo rápido.
+
+### Que el brazo no se caiga: retención (`EM_lock`)
+
+Los ejes no se sostienen solos entre movimientos. `HOLD_ENABLED` activa la
+**retención nativa del shield** (`EM_lock`), que mantiene cada eje en su sitio
+mientras el host piensa o mueve la garra, sin bucles de corrección. Reglas:
+
+- `STOP`, `ZERO`, un fallo o una desconexión **liberan** los motores — sostén
+  el brazo con la mano antes de mandarlos.
+- `_seek_stop` y `_creep_to` la sueltan mientras empujan (no tiene sentido
+  pelear contra ella) y la vuelven a activar al terminar.
+- Si el firmware no trae `EM_lock`, el cliente lo dice con un error claro antes
+  de mover nada, en vez de fallar a media jugada.
+
+### Orden de los ejes y verificación final
+
+`MOVE` mueve **primero el hombro y luego el codo** (`MOVE_SHOULDER_FIRST`): se
+ve mejor y el codo sigue recogido durante el giro, así que barre menos tablero.
+Al terminar **relee los dos encoders**, porque al desplegar el codo el hombro
+sostiene más brazo y puede ceder después de darlo por bueno:
+
+- Si cedió poco (`MOVE_SAG_DEG`), se corrige y la jugada sigue. Abortar por eso
+  dejaría la pieza a medio camino, que es peor.
+- Si no se deja corregir, `ERR ... no mantuvo ...`: la retención no está
+  haciendo su trabajo y hay que decirlo, no mover el brazo a ciegas.
+
+Los ángulos realmente alcanzados vuelven en `ACK MOVE <hombro> <codo>`, leídos
+al final de verdad y no antes de mover el otro eje.
 
 Si aun así se queda corto: batería del shield baja (los motores **no** se
 alimentan del USB) es la causa número uno; después, cables o topes tirando del
 brazo. Las perillas a tocar son `CREEP_POWER_MAX` y `MOVE_SPEED_MAX_RPM`.
-`python3 test_humo.py` mide el error de cada eje e imprime el diagnóstico.
+`python3 test_humo.py` mide el error de cada eje, comprueba la retención en
+reposo e imprime el diagnóstico.
 
-El control se prueba **sin brazo** en `tests/test_cyberpi_client_motion.py`:
-carga el cliente como texto, le enchufa un motor simulado que se queda corto y
-que cede, y comprueba que converge igualmente. Si tocas `_move_axis`,
-`_drive_turns` o `_creep_to`, esos tests deben seguir pasando.
+Todo esto se prueba **sin brazo** en `tests/test_cyberpi_arm_client.py`: importa
+el cliente con un `cyberpi` falso y un shield simulado que se queda corto, que
+cede y que pierde la retención. Si tocas `_move_axis`, `_drive_turns`,
+`_creep_to` o `_move_all`, esos tests deben seguir pasando.
 
 ---
 
