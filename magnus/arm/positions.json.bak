@@ -262,9 +262,5 @@
   "exchange": {
     "shoulder": 6.0,
     "elbow": -187.0
-  },
-  "park": {
-    "shoulder": 25.0,
-    "elbow": -175.0
   }
 }
