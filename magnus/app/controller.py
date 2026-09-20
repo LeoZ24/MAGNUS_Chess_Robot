@@ -501,12 +501,17 @@ class MagnusController:
         self._arm_start(planned)
 
     def _cmd_arm_stop(self) -> None:
+        # Una parada no debe provocar otro intento automático en el siguiente frame.
+        self._save_settings(arm_auto_execute=False)
         if self.arm is not None:
             self.arm.stop()
             self._emit("warn", "PARADA del brazo")
 
     def _arm_start(self, planned: MoveResponse) -> None:
         assert self.arm is not None
+        if not self._board_ready_for_arm():
+            self._emit("warn", "Espera a que la cámara confirme el tablero antes de mover el brazo")
+            return
         uci = planned.uci
         expected_fen = self.session.tracker.fen()
 
@@ -530,6 +535,7 @@ class MagnusController:
                 self.synth.push(uci)
         else:
             self._emit("error", f"Brazo: {error}")
+            self._save_settings(arm_auto_execute=False)
             # La jugada sigue pendiente: el humano puede moverla por el robot
             # o reintentar tras arreglar el problema.
             self._arm_done_uci = None
@@ -639,7 +645,9 @@ class MagnusController:
     def _game_logic(self, frame_ok: bool = True) -> None:
         session = self.session
         placement = self._placement
-        if self.in_game and frame_ok and self.pose is not None and self._stable >= STABLE_FRAMES:
+        arm_moving = self.arm is not None and self.arm.is_busy
+        if (self.in_game and frame_ok and not arm_moving
+                and self.pose is not None and self._stable >= STABLE_FRAMES):
             # Un placement con MÁS piezas que la partida es un transitorio de
             # detección (pieza vieja aún no olvidada): no intentarlo.
             if len(placement) <= len(session.tracker.placement()):
@@ -673,6 +681,9 @@ class MagnusController:
 
     def _on_move_seen(self, san: str) -> None:
         session = self.session
+        # La misma UCI puede repetirse más adelante (p. ej. ida/vuelta de caballo).
+        self._arm_done_uci = None
+        self._arm_pending = False
         self.message = None
         self._last_activity = time.monotonic()
         self._emit("move", f"{'MAGNUS' if session.last_mover == 'robot' else 'Rival'}: {san}")
@@ -686,6 +697,8 @@ class MagnusController:
                     self.voice.react_to_capture()
                 if detail.is_check:
                     self.voice.react_to_check()
+        elif self.voice is not None and session.last_mover == "robot" and not session.board.is_game_over():
+            self.voice.say_your_turn()
         # Se analiza la posición resultante para poder comentar y para la barra
         # de evaluación: tras la jugada del robot queda la referencia, y tras
         # la del humano se compara contra ella (Δ de centipeones).
@@ -710,7 +723,6 @@ class MagnusController:
         if session.planned and session.planned.uci != session.announced_uci:
             session.announced_uci = session.planned.uci
             voice.announce_move(session.planned)
-            voice.say_your_turn()
             self._last_activity = time.monotonic()
         if session.board.is_game_over() and not session.end_announced:
             session.end_announced = True
@@ -719,6 +731,12 @@ class MagnusController:
                 is_checkmate=board.is_checkmate(),
                 winner_is_robot=(board.is_checkmate() and board.turn != session.robot_color),
             )
+
+    def _board_ready_for_arm(self) -> bool:
+        """Solo ejecutar desde un tablero visible, estable y acorde a la partida."""
+        return (self.camera_error is None and self.pose is not None
+                and self._stable >= STABLE_FRAMES
+                and self._placement == self.session.tracker.placement())
 
     def _arm_logic(self) -> None:
         """Decide si la jugada planificada debe ir al brazo (auto) o esperar el botón."""
@@ -730,7 +748,7 @@ class MagnusController:
             return
         if planned.uci == self._arm_done_uci or arm.is_busy:
             return
-        if not arm.is_ready:
+        if not arm.is_ready or not self._board_ready_for_arm():
             self._arm_pending = False
             return
         if self.settings.arm_auto_execute:
@@ -821,6 +839,8 @@ class MagnusController:
         if self.arm is not None and self.arm.is_busy:
             return "playing", "arm_moving"
         if session.planned is not None:
+            if session.planned.uci == self._arm_done_uci and self.arm is not None and self.arm.is_ready:
+                return "playing", "awaiting_robot_board"
             return "playing", "robot_ready"
         return "playing", "robot_thinking"
 

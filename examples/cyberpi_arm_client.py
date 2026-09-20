@@ -55,11 +55,17 @@ GRIPPER_PORT  = "S1"      # servo que acerca/aleja el iman N52
 # control con el eje a medio camino. Si el brazo se queda corto, SUBE esto.
 MOVE_SPEED_RPM      = 60      # velocidad de la pasada principal
 MOVE_SPEED_FINE_RPM = 40      # velocidad de las pasadas de correccion
+SHOULDER_FINE_RPM   = 60      # el hombro cargado necesita conservar velocidad
 MOVE_FINE_BELOW_DEG = 15.0    # por debajo de este error se usa la fina
 TOLERANCE_DEG       = 1.0     # objetivo alcanzado si el error es menor
 MOVE_MAX_PASSES     = 4       # correcciones antes de rendirse
 MOVE_FAIL_DEG       = 3.0     # error final que se considera fallo -> ERR
 MOVE_SETTLE_S       = 0.15    # dejar que el encoder se asiente entre pasadas
+
+# Retencion nativa del shield: sostiene los ejes entre movimientos, incluso
+# mientras el host piensa o mueve la garra. No necesita un bucle de correccion.
+# STOP, un fallo o una desconexion liberan los motores: sostener el brazo.
+HOLD_ENABLED       = True
 
 # Juego de la transmision (backlash). Si el brazo no repite al llegar a un
 # angulo desde un lado o desde el otro, sube esto: el ultimo tramo entrara
@@ -139,7 +145,20 @@ def _hw_get_angle(port):
     return cyberpi.mbot2.EM_get_angle(port)
 
 def _hw_turn(delta_deg, speed_rpm, port):
+    _hw_hold(HOLD_ENABLED, port)
     cyberpi.mbot2.EM_turn(delta_deg, speed_rpm, port)   # RELATIVO, bloquea
+
+def _hw_hold(enabled, port):
+    # API de Makeblock, "APIs for Extension Boards", mBot2 / EM_lock:
+    # https://www.yuque.com/makeblock-help-center-en/mcode/cyberpi-api-shields
+    # La retencion esta desactivada por defecto en el firmware.
+    lock = getattr(cyberpi.mbot2, "EM_lock", None)
+    if lock is None:
+        if enabled:
+            raise ValueError("EM_lock no disponible: actualiza el firmware "
+                             "de CyberPi/mBot2 para activar la retencion")
+        return
+    lock(enabled, port)
 
 def _hw_set_power(power_pct, port):
     # TODO(verificar en mBlock): potencia cruda, sin control de posicion.
@@ -150,10 +169,13 @@ def _hw_reset_angle(port):
     cyberpi.mbot2.EM_reset_angle(port)
 
 def _hw_stop_axis(port):
-    cyberpi.mbot2.EM_stop(port)
+    try:
+        cyberpi.mbot2.EM_stop(port)
+    finally:
+        _hw_hold(False, port)
 
 def _hw_stop():
-    cyberpi.mbot2.EM_stop("all")
+    _hw_stop_axis("all")
 
 def _hw_servo(angle):
     cyberpi.mbot2.servo_set(angle, GRIPPER_PORT)
@@ -168,7 +190,7 @@ def _log(text):
 
 def _clamp(v, lim, name):
     lo, hi = lim
-    if v < lo or v > hi:
+    if not lo <= v <= hi:
         raise ValueError(
             name + " fuera de limites: " + str(v) + " no esta en ["
             + str(lo) + ", " + str(hi) + "]. Recuerda que el recorrido util va"
@@ -185,21 +207,23 @@ def _move_axis(target, port, lim, name):
     giro y confiar. Devuelve el angulo realmente alcanzado.
     """
     target = _clamp(target, lim, name)
+    _hw_hold(HOLD_ENABLED, port)
     start = _hw_get_angle(port)
 
     # Compensacion de juego: si vinieramos "del lado contrario", pasarse un
     # poco para que el tramo final entre siempre en el mismo sentido.
     if BACKLASH_DEG > 0 and (target - start) * APPROACH_SIGN < 0:
-        pre = target - APPROACH_SIGN * BACKLASH_DEG
+        pre = max(lim[0], min(lim[1], target - APPROACH_SIGN * BACKLASH_DEG))
         _hw_turn(pre - start, MOVE_SPEED_RPM, port)
         time.sleep(MOVE_SETTLE_S)
 
-    current = start
+    current = _hw_get_angle(port)
     for _ in range(MOVE_MAX_PASSES):
         delta = target - current
         if abs(delta) <= TOLERANCE_DEG:
             break
-        speed = MOVE_SPEED_FINE_RPM if abs(delta) < MOVE_FINE_BELOW_DEG else MOVE_SPEED_RPM
+        fine_speed = SHOULDER_FINE_RPM if port == SHOULDER_PORT else MOVE_SPEED_FINE_RPM
+        speed = fine_speed if abs(delta) < MOVE_FINE_BELOW_DEG else MOVE_SPEED_RPM
         _hw_turn(delta, speed, port)
         time.sleep(MOVE_SETTLE_S)
         current = _hw_get_angle(port)
@@ -215,6 +239,27 @@ def _move_axis(target, port, lim, name):
     return current
 
 
+def _move_all(shoulder, elbow):
+    """Valida ambos destinos antes de mover y verifica la pose FINAL completa."""
+    _clamp(shoulder, SHOULDER_LIM, "hombro")
+    _clamp(elbow, ELBOW_LIM, "codo")
+    _hw_hold(HOLD_ENABLED, "all")
+    _move_axis(shoulder, SHOULDER_PORT, SHOULDER_LIM, "hombro")
+    _move_axis(elbow, ELBOW_PORT, ELBOW_LIM, "codo")
+    # El hombro puede ceder al cambiar la carga cuando se mueve el codo.
+    # No devolver su lectura anterior como si siguiera siendo la actual.
+    time.sleep(MOVE_SETTLE_S)
+    got_sh = _hw_get_angle(SHOULDER_PORT)
+    got_el = _hw_get_angle(ELBOW_PORT)
+    for name, target, current in (("hombro", shoulder, got_sh),
+                                  ("codo", elbow, got_el)):
+        if abs(target - current) > MOVE_FAIL_DEG:
+            raise ValueError(name + " no mantuvo " + str(target)
+                             + " (quedo en " + str(current)
+                             + "). Revisa retencion, bateria y carga del brazo.")
+    return got_sh, got_el
+
+
 # ======================= REFERENCIADO (HOME) =======================
 
 def _seek_stop(port, sign, power, name):
@@ -223,6 +268,7 @@ def _seek_stop(port, sign, power, name):
     Deteccion de tope sin sensor: si el motor tiene potencia aplicada y el
     angulo no cambia durante varias muestras seguidas, esta apoyado.
     """
+    _hw_hold(False, port)       # no luchar contra la retencion al buscar tope
     _hw_set_power(power * sign, port)
     last = _hw_get_angle(port)
     still = 0
@@ -267,13 +313,16 @@ def _home_axis(port, sign, name):
     # Separarse del tope ANTES de fijar el cero.
     _hw_turn(-sign * HOME_ZERO_OFFSET_DEG, MOVE_SPEED_FINE_RPM, port)
     time.sleep(MOVE_SETTLE_S)
+    _hw_stop_axis(port)         # descartar la referencia de retencion anterior
     _hw_reset_angle(port)
+    _hw_hold(HOLD_ENABLED, port)
     _log("  " + name + " cero fijado")
 
 
 def _home_all():
     """Referencia los dos ejes. El CODO primero: se recoge sobre si mismo y
     el brazo no barre el tablero mientras el hombro busca su tope."""
+    _hw_hold(HOLD_ENABLED, "all")
     _home_axis(ELBOW_PORT, HOME_ELBOW_SIGN, "codo")
     _home_axis(SHOULDER_PORT, HOME_SHOULDER_SIGN, "hombro")
 
@@ -304,6 +353,7 @@ def handle(line):
                 + " " + str(ELBOW_LIM[0]) + " " + str(ELBOW_LIM[1]))
 
     if cmd == "ZERO":
+        _hw_stop()             # ZERO es manual; no conservar un objetivo viejo
         _hw_reset_angle(SHOULDER_PORT)
         _hw_reset_angle(ELBOW_PORT)
         return "ACK ZERO"
@@ -313,8 +363,7 @@ def handle(line):
             return "ERR MOVE requiere 2 argumentos"
         sh = float(parts[1])
         el = float(parts[2])
-        got_sh = _move_axis(sh, SHOULDER_PORT, SHOULDER_LIM, "hombro")
-        got_el = _move_axis(el, ELBOW_PORT, ELBOW_LIM, "codo")
+        got_sh, got_el = _move_all(sh, el)
         return "ACK MOVE " + str(got_sh) + " " + str(got_el)
 
     if cmd == "GRIPPER":
@@ -392,24 +441,27 @@ def sesion():
                     sock.send((resp + "\n").encode())
     finally:
         try:
+            _hw_stop()
+        finally:
             sock.close()
-        except Exception:
-            pass
 
 
 # ======================= ARRANQUE =======================
 
+# Este archivo se pega en mBlock: ejecutar directamente, sin depender del
+# valor de __name__ que le asigne el cargador de programas de la placa.
+# Los tests ejecutan este mismo arranque con CyberPi y red simuladas.
 cyberpi.console.clear()
-cyberpi.console.println("MAGNUS arm client")
+cyberpi.console.println("MAGNUS arm client (retencion)")
+cyberpi.led.on("blue")       # arranque visible ANTES de consultar Wi-Fi
 
-# El Wi-Fi se reintenta DENTRO del bucle: asi la placa nunca se queda
-# atascada antes de llegar a un punto donde se la puede interrumpir.
+# Bucle de servicio existente de la placa.
 while True:
     try:
         if cyberpi.wifi.is_connect() or conectar_wifi():
             sesion()
     except Exception as e:
-        cyberpi.console.println("Sin host, reintento")
+        cyberpi.console.println("Error cliente: " + str(e))
         cyberpi.led.on("red")
     _hw_stop()          # que un fallo de red nunca deje un motor empujando
     time.sleep(2)       # esperar antes de reintentar

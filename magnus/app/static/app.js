@@ -310,6 +310,9 @@
           title: (arm.steps || [])[i] || "…", detail: `Paso ${Math.max(0, i) + 1} de ${n} · ${planned ? planned.san : ""}`,
           actions: [{ label: "■ PARADA", cmd: "arm_stop", cls: "btn-danger" }] });
       }
+      case "awaiting_robot_board":
+        return setBanner({ kicker: "RECORRIDO TERMINADO", title: planned ? planned.san : "…", cls: "robot",
+          detail: `Esperando que la cámara confirme la jugada. Si la garra no está conectada, mueve la pieza a mano: ${planned ? `${planned.from} → ${planned.to}` : ""}` });
       case "robot_ready": {
         const san = planned ? planned.san : "…";
         const path = planned ? `${planned.from} → ${planned.to}` : "";
@@ -327,7 +330,8 @@
           return setBanner({ kicker: "MAGNUS JUEGA", title: san, cls: "alert",
             detail: (arm.error || ARM_STATUS_ES[arm.status]) + ` · mueve tú: ${path}` });
         }
-        return setBanner({ kicker: "MAGNUS JUEGA", title: san, cls: "robot", detail: "Preparando el brazo…" });
+        return setBanner({ kicker: "MAGNUS JUEGA", title: san, cls: "robot",
+          detail: arm.status === "homing" ? "Referenciando el brazo…" : "Esperando al brazo y al tablero estable…" });
       }
     }
     return setBanner({ kicker: "PARTIDA", title: "…" });
