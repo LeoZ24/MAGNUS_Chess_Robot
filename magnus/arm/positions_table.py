@@ -7,18 +7,16 @@ manual) y en tiempo de juego solo se **consultan** — nunca se calculan.
 Formato del JSON (``positions.json``)::
 
     {
-      "e4": {
-        "approach": {"shoulder": 32.5, "elbow": 110.0},
-        "engage":   {"shoulder": 35.0, "elbow": 118.0}
-      },
+      "e4": {"shoulder": 32.5, "elbow": -110.0},
       ...
-      "discard":  { "approach": {...}, "engage": {...} },
-      "exchange": { "approach": {...}, "engage": {...} }
+      "discard":  {"shoulder": ..., "elbow": ...},
+      "exchange": {"shoulder": ..., "elbow": ...}
     }
 
-    * ``approach``: el brazo está sobre la casilla, a altura segura (el imán
-      N52 no influye en piezas vecinas)
-    * ``engage``: el brazo está bajado, en posición de agarrar/soltar
+Una posición por casilla: hombro y codo no controlan altura. El servo S1
+recoge y suelta con los mismos dos ángulos para todas las piezas.
+Las tablas antiguas con ``approach``/``engage`` siguen cargando: se usa
+``engage`` como posición de la casilla y no se reproducen cambios de altura.
 
 Las unidades (grados o pasos de encoder) NO están fijadas por este módulo: se
 usan tal cual se grabaron.  Lo único que importa es que la tabla y el backend
@@ -37,6 +35,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Union
@@ -54,6 +53,16 @@ ALL_SQUARES: tuple[str, ...] = tuple(
 # Claves que la tabla debería tener para jugar una partida completa: las 64
 # casillas y las dos zonas (capturas y promociones).
 REQUIRED_KEYS: tuple[str, ...] = ALL_SQUARES + (config.ZONE_DISCARD, config.ZONE_EXCHANGE)
+
+# Claves que la tabla PUEDE tener pero no necesita para jugar.  La de reposo
+# entra aquí y no en REQUIRED_KEYS a propósito: si fuese obligatoria, las
+# tablas ya grabadas pasarían a estar "incompletas" y la interfaz dejaría de
+# permitir el brazo real hasta volver a calibrar.  Sin ella el brazo juega
+# igual, solo que se queda donde termine la jugada.
+OPTIONAL_KEYS: tuple[str, ...] = (config.ZONE_PARK,)
+
+# Todo lo que tiene sentido grabar con examples/record_arm_positions.py.
+RECORDABLE_KEYS: tuple[str, ...] = REQUIRED_KEYS + OPTIONAL_KEYS
 
 
 class PositionsTableError(Exception):
@@ -74,10 +83,15 @@ class JointAngles:
 
 @dataclass(frozen=True)
 class SquarePosition:
-    """Las dos sub-posiciones grabadas para una casilla o zona."""
+    """Posición de casilla; conserva los campos antiguos por compatibilidad."""
 
-    approach: JointAngles   # sobre la casilla, a altura segura
-    engage: JointAngles     # bajado, en posición de agarrar/soltar
+    approach: JointAngles   # campo legado, no se reproduce
+    engage: JointAngles     # posición única de agarrar/soltar
+
+    @property
+    def position(self) -> JointAngles:
+        """Ángulos de hombro/codo para situarse en la casilla."""
+        return self.engage
 
 
 class PositionsTable:
@@ -131,17 +145,25 @@ class PositionsTable:
 
     @classmethod
     def from_dict(cls, raw: dict) -> "PositionsTable":
+        if not isinstance(raw, dict):
+            raise PositionsTableError("La tabla debe ser un objeto JSON.")
         positions: dict[str, SquarePosition] = {}
         for key, entry in raw.items():
+            if _entry_is_calibrated(entry) is not True:
+                raise PositionsTableError(f"Entrada inválida para {key!r}: faltan ángulos numéricos finitos.")
             try:
-                positions[key] = SquarePosition(
-                    approach=JointAngles(**entry["approach"]),
-                    engage=JointAngles(**entry["engage"]),
-                )
+                if "shoulder" in entry or "elbow" in entry:
+                    angles = JointAngles(**entry)
+                    positions[key] = SquarePosition(approach=angles, engage=angles)
+                else:
+                    positions[key] = SquarePosition(
+                        approach=JointAngles(**entry["approach"]),
+                        engage=JointAngles(**entry["engage"]),
+                    )
             except (KeyError, TypeError) as exc:
                 raise PositionsTableError(
-                    f"Entrada inválida para {key!r}: se esperan sub-posiciones "
-                    f"'approach' y 'engage' con 'shoulder' y 'elbow' ({exc})."
+                    f"Entrada inválida para {key!r}: se esperan 'shoulder' y "
+                    f"'elbow' (o el formato legado approach/engage) ({exc})."
                 ) from exc
         logger.info("Tabla de posiciones cargada: %d entradas.", len(positions))
         return cls(positions)
@@ -162,11 +184,11 @@ def make_fake_table(include_zones: bool = True) -> PositionsTable:
     positions: dict[str, SquarePosition] = {}
     keys = list(ALL_SQUARES)
     if include_zones:
-        keys += [config.ZONE_DISCARD, config.ZONE_EXCHANGE]
+        keys += [config.ZONE_DISCARD, config.ZONE_EXCHANGE, config.ZONE_PARK]
     for i, key in enumerate(keys):
         positions[key] = SquarePosition(
             approach=JointAngles(shoulder=FAKE_VALUE + i, elbow=-FAKE_VALUE - i),
-            engage=JointAngles(shoulder=FAKE_VALUE + i + 0.5, elbow=-FAKE_VALUE - i - 0.5),
+            engage=JointAngles(shoulder=FAKE_VALUE + i, elbow=-FAKE_VALUE - i),
         )
     return PositionsTable(positions)
 
@@ -190,6 +212,7 @@ class PositionsReport:
     missing: list[str] = field(default_factory=list)      # ausentes o con null
     invalid: list[str] = field(default_factory=list)      # mal formadas
     unknown: list[str] = field(default_factory=list)      # claves que no son casilla/zona
+    has_park: bool = False                                # zona de reposo grabada
 
     @property
     def total(self) -> int:
@@ -197,7 +220,11 @@ class PositionsReport:
 
     @property
     def complete(self) -> bool:
-        """``True`` si la tabla sirve para jugar (64 casillas + 2 zonas)."""
+        """``True`` si la tabla sirve para jugar (64 casillas + 2 zonas).
+
+        La zona de reposo NO cuenta: sin ella se juega igual, solo que el brazo
+        se queda donde termine la jugada (ver :attr:`has_park`).
+        """
         return self.exists and self.error is None and not self.missing and not self.invalid
 
     def to_dict(self) -> dict:
@@ -211,6 +238,7 @@ class PositionsReport:
             "missing": list(self.missing),
             "invalid": list(self.invalid),
             "unknown": list(self.unknown),
+            "has_park": self.has_park,
         }
 
 
@@ -219,8 +247,8 @@ def _entry_is_calibrated(entry: object) -> Optional[bool]:
     if not isinstance(entry, dict):
         return None
     values = []
-    for sub in ("approach", "engage"):
-        joints = entry.get(sub)
+    flat = "shoulder" in entry or "elbow" in entry
+    for joints in ([entry] if flat else [entry.get("approach"), entry.get("engage")]):
         if not isinstance(joints, dict):
             return None
         for joint in ("shoulder", "elbow"):
@@ -229,7 +257,8 @@ def _entry_is_calibrated(entry: object) -> Optional[bool]:
             values.append(joints[joint])
     if all(v is None for v in values):
         return False
-    if all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in values):
+    if all(isinstance(v, (int, float)) and not isinstance(v, bool)
+           and math.isfinite(v) for v in values):
         return True
     return None
 
@@ -264,5 +293,6 @@ def inspect_positions_file(path: Union[str, Path]) -> PositionsReport:
             report.missing.append(key)
         else:
             report.invalid.append(key)
-    report.unknown = [k for k in raw if k not in REQUIRED_KEYS]
+    report.unknown = [k for k in raw if k not in RECORDABLE_KEYS]
+    report.has_park = _entry_is_calibrated(raw.get(config.ZONE_PARK)) is True
     return report

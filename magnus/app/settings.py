@@ -55,6 +55,7 @@ class AppSettings:
     # Brazo
     arm_mode: str = ARM_MODE_OFF
     arm_auto_execute: bool = False       # sin esto hay que pulsar "Ejecutar"
+    arm_auto_home: bool = True           # referenciar el brazo al conectar
     arm_port: int = 5555                 # puerto TCP que espera a la CyberPi
     positions_path: str = DEFAULT_POSITIONS_FILE
 

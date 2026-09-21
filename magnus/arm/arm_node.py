@@ -1,7 +1,7 @@
 """Nodo del brazo de MAGNUS: MoveResponse -> secuencia de movimientos pregrabados.
 
 Recibe la ``MoveResponse`` del engine y la traduce a una secuencia de
-primitivas (approach / engage / garra) usando **solo** la tabla de posiciones
+primitivas (move / garra) usando **solo** la tabla de posiciones
 pregrabadas — sin ningún cálculo geométrico (ver ``positions_table.py``).
 
 La planificación (:meth:`ArmNode.plan`) está separada de la ejecución
@@ -9,8 +9,14 @@ La planificación (:meth:`ArmNode.plan`) está separada de la ejecución
 
 Secuencia básica de "levantar y colocar" (pick & place) de ``X`` a ``Y``::
 
-    approach(X) -> engage(X) -> garra ON  -> approach(X)
- -> approach(Y) -> engage(Y) -> garra OFF -> approach(Y)
+    move(X) -> garra ON -> move(Y) -> garra OFF -> move(park)
+
+El ``move(park)`` final retira el brazo fuera del tablero: si se queda donde
+terminó la jugada, le estorba al rival y le tapa el tablero a la cámara.  Solo
+se añade si ``park`` está grabado en la tabla (es opcional).
+
+Hombro y codo no suben ni bajan: hay una sola posición por casilla.
+S1 recoge y suelta la pieza. Cada jugada empieza devolviendo S1 a reposo.
 
 Los casos especiales encadenan varios pick & place, usando los metadatos de la
 ``MoveResponse`` (el brazo NO re-calcula nada de ajedrez):
@@ -50,8 +56,7 @@ class ArmStep:
     """Una primitiva de la secuencia del brazo.
 
     ``action`` es una de:
-        * ``"approach"`` -> mover a la sub-posición segura de ``target``
-        * ``"engage"``   -> mover a la sub-posición de contacto de ``target``
+        * ``"move"``    -> mover a la posición de ``target``
         * ``"grip_on"``  -> activar la garra (agarrar)
         * ``"grip_off"`` -> desactivar la garra (soltar)
     """
@@ -66,14 +71,10 @@ class ArmStep:
 def _pick_and_place(source: str, dest: str) -> list[ArmStep]:
     """Secuencia para llevar la pieza de ``source`` a ``dest``."""
     return [
-        ArmStep("approach", source),
-        ArmStep("engage", source),
+        ArmStep("move", source),
         ArmStep("grip_on"),
-        ArmStep("approach", source),   # subir antes de desplazarse (imán N52)
-        ArmStep("approach", dest),
-        ArmStep("engage", dest),
+        ArmStep("move", dest),
         ArmStep("grip_off"),
-        ArmStep("approach", dest),     # retirarse a altura segura
     ]
 
 
@@ -109,6 +110,18 @@ class ArmNode:
             self._started = False
             logger.info("ArmNode detenido.")
 
+    def home(self) -> None:
+        """Referencia el brazo (el backend lleva el cero a su tope físico).
+
+        Los ángulos de la tabla son absolutos, así que solo significan algo si
+        el cero es el mismo en todas las partidas.  Esto no es geometría: el
+        nodo solo pide la referencia, el backend la ejecuta.
+        """
+        if not self._started:
+            self.start()
+        self._backend.home()
+        logger.info("ArmNode referenciado.")
+
     def __enter__(self) -> "ArmNode":
         return self.start()
 
@@ -125,7 +138,7 @@ class ArmNode:
                 f"MoveResponse sin from/to: {resp.uci!r}. ¿Vino del engine?"
             )
 
-        steps: list[ArmStep] = []
+        steps: list[ArmStep] = [ArmStep("grip_off")]
 
         # 1. Captura (incluida al paso): retirar la pieza capturada primero.
         #    En al paso, captured_square != to_square — por eso se usa siempre
@@ -153,6 +166,20 @@ class ArmNode:
                     f"Enroque sin rook_from/rook_to en {resp.uci!r}."
                 )
             steps += _pick_and_place(resp.rook_from, resp.rook_to)
+
+        # 4. Retirarse del tablero. Plantado donde termino la jugada, el brazo
+        #    le estorba al rival y le tapa el tablero a la camara, que es como
+        #    la vision se entera de la jugada siguiente.
+        #    Es opcional: sin `park` grabado se juega igual (ver ZONE_PARK).
+        if self._table.has(config.ZONE_PARK):
+            steps.append(ArmStep("move", config.ZONE_PARK))
+        else:
+            logger.warning(
+                "Sin posicion de reposo (%r) en la tabla: el brazo se quedara "
+                "donde termine la jugada, tapando el tablero. Grabala con "
+                "`python3 examples/record_arm_positions.py park`.",
+                config.ZONE_PARK,
+            )
 
         # Verificar que todas las posiciones existen en la tabla ANTES de
         # ejecutar nada (mejor fallar en seco que a mitad de jugada).
@@ -188,11 +215,8 @@ class ArmNode:
         return steps
 
     def _run_step(self, step: ArmStep) -> None:
-        if step.action == "approach":
-            angles = self._table.get(step.target).approach
-            self._backend.move_to(angles.shoulder, angles.elbow)
-        elif step.action == "engage":
-            angles = self._table.get(step.target).engage
+        if step.action == "move":
+            angles = self._table.get(step.target).position
             self._backend.move_to(angles.shoulder, angles.elbow)
         elif step.action == "grip_on":
             self._backend.set_gripper(True)

@@ -2,11 +2,18 @@
 
 import json
 import time
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 import pytest
 
 from magnus.app.controller import MagnusController
+from magnus.app.arm_bridge import ArmSupervisor
+from magnus.app.session import SyntheticCamera
 from magnus.app.settings import AppSettings
+from magnus.arm.backend import FakeArmBackend
+from magnus.arm.positions_table import PositionsTable
 from magnus.vision.vision_node import CameraBackend, CameraError
 from magnus.voice.backend import FakeSpeechBackend
 
@@ -77,6 +84,88 @@ def test_full_synthetic_game_with_simulated_arm(controller):
     assert any("Brazo ejecutando" in e["text"] for e in snap["events"])
     spoken = controller.voice.backend.spoken
     assert spoken and any("Muevo" in t or "muevo" in t for t in spoken)
+
+
+def test_calibrated_arm_executes_once_and_waits_for_camera():
+    """Sin garra, completar el recorrido no inventa que la pieza se movió."""
+    path = str(Path(__file__).resolve().parents[1] / "magnus/arm/positions.json")
+    settings = AppSettings(robot_side="white", arm_mode="cyberpi",
+                           arm_auto_execute=True, positions_path=path)
+    backend = FakeArmBackend()
+    arm = ArmSupervisor(mode="cyberpi", positions_path=path,
+                        backend_factory=lambda port: backend)
+    camera = SyntheticCamera()  # Imagen controlada a mano, sin guion de demo.
+    ctrl = MagnusController(settings, camera=camera, arm=arm,
+                            engine_factory=fake_engine_factory(), voice_backend=FakeSpeechBackend())
+    ctrl.start_without_thread()
+    ctrl.voice.say_your_turn = Mock()
+    try:
+        assert _wait_engine(ctrl)
+        _run(ctrl, 20)
+        ctrl.command("start_game")
+        assert _run(ctrl, 500, until=lambda s: s["sub"] == "awaiting_robot_board", sleep=0.001)
+        planned = ctrl.session.planned
+        assert planned is not None
+        table = PositionsTable.load(path)
+        source = table.get(planned.from_square).position
+        dest = table.get(planned.to_square).position
+        assert backend.commands == [
+            ("connect",), ("home",), ("gripper", False),
+            ("move_to", source.shoulder, source.elbow), ("gripper", True),
+            ("move_to", dest.shoulder, dest.elbow), ("gripper", False),
+        ]
+        _run(ctrl, 30)
+        assert len(backend.commands) == 7
+        assert ctrl.session.history_san == []
+        ctrl.voice.say_your_turn.assert_not_called()
+        assert camera.push(planned.uci)  # El usuario mueve la pieza tras el recorrido.
+        assert _run(ctrl, 150, until=lambda s: len(s["history"]) == 1)
+        assert ctrl.snapshot()["sub"] == "human_turn"
+        ctrl.voice.say_your_turn.assert_called_once()
+        assert ctrl._arm_done_uci is None  # Se puede volver a jugar esa UCI más adelante.
+    finally:
+        ctrl.shutdown()
+
+
+def test_arm_does_not_start_from_an_unconfirmed_board(controller):
+    assert _wait_engine(controller)
+    controller.command("start_game")
+    controller.settings = controller.settings.update(arm_auto_execute=False)
+    assert _run(controller, 1000, until=lambda s: s["arm"]["pending"], sleep=0.001)
+    controller._stable = 0
+    controller.settings = controller.settings.update(arm_auto_execute=True)
+    with patch.object(controller.arm, "execute") as execute:
+        controller._arm_logic()
+        controller._cmd_arm_execute()
+        execute.assert_not_called()
+
+
+def test_stop_disables_automatic_execution(controller):
+    controller._cmd_arm_stop()
+    assert not controller.settings.arm_auto_execute
+
+
+def test_failed_arm_move_requires_manual_retry(controller):
+    controller.in_game = True
+    controller._cmd__arm_finished("e2e4", False, "motor atascado", controller.session.tracker.fen())
+    assert not controller.settings.arm_auto_execute
+    assert controller._arm_pending
+
+
+def test_camera_does_not_confirm_a_move_while_arm_is_busy():
+    ctrl = MagnusController(AppSettings(robot_side="white"),
+                            engine_enabled=False, voice_enabled=False)
+    ctrl.in_game = True
+    ctrl.pose = object()  # Solo interesa que exista una pose para aplicar el placement.
+    ctrl._stable = 100
+    ctrl._placement = ctrl.session.tracker.placement()
+    ctrl._placement["e4"] = ctrl._placement.pop("e2")
+    ctrl.arm = SimpleNamespace(is_busy=True)
+    ctrl._game_logic()
+    assert ctrl.session.history_san == []
+    ctrl.arm.is_busy = False
+    ctrl._game_logic()
+    assert ctrl.session.history_san == ["e4"]
 
 
 def test_set_difficulty_applies_and_persists(controller, tmp_path):
@@ -188,3 +277,53 @@ def test_threaded_start_and_shutdown(tmp_path):
         assert ctrl.seq >= 5
         jpeg, seq = ctrl.wait_for_jpeg(0, timeout=2.0)
         assert jpeg is not None and seq > 0
+
+
+def test_arm_home_command_references_the_arm(tmp_path):
+    """El botón "Referenciar" llega al brazo y avisa por evento al terminar."""
+    settings = AppSettings(arm_mode="simulated", arm_auto_execute=False)
+    ctrl = MagnusController(settings, synthetic=True,
+                            engine_factory=fake_engine_factory(),
+                            voice_enabled=False, arm_step_delay_s=0.0)
+    ctrl.start_without_thread()
+    try:
+        backend = ctrl.arm._node._backend
+        ctrl.command("arm_home")
+        assert _run(ctrl, 2000, until=lambda s: ("home",) in backend.commands,
+                    sleep=0.001)
+        texts = [e["text"] for e in ctrl.snapshot()["events"]]
+        assert any("eferenciad" in t for t in texts)
+    finally:
+        ctrl.shutdown()
+
+
+def test_arm_home_is_refused_while_the_arm_is_off(tmp_path):
+    settings = AppSettings(arm_mode="off")
+    ctrl = MagnusController(settings, synthetic=True,
+                            engine_factory=fake_engine_factory(),
+                            voice_enabled=False, arm_step_delay_s=0.0)
+    ctrl.start_without_thread()
+    try:
+        ctrl.command("arm_home")
+        _run(ctrl, 5)
+        texts = [e["text"] for e in ctrl.snapshot()["events"]]
+        assert any("apagado" in t for t in texts)
+    finally:
+        ctrl.shutdown()
+
+
+def test_set_arm_persists_auto_home(tmp_path):
+    path = tmp_path / "s.json"
+    settings = AppSettings(arm_mode="simulated")
+    ctrl = MagnusController(settings, synthetic=True, settings_path=str(path),
+                            engine_factory=fake_engine_factory(),
+                            voice_enabled=False, arm_step_delay_s=0.0)
+    ctrl.start_without_thread()
+    try:
+        ctrl.command("set_arm", {"auto_home": False})
+        _run(ctrl, 5)
+        assert ctrl.settings.arm_auto_home is False
+        assert ctrl.arm.auto_home is False
+        assert json.loads(path.read_text(encoding="utf-8"))["arm_auto_home"] is False
+    finally:
+        ctrl.shutdown()

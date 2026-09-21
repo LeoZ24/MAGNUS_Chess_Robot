@@ -53,3 +53,17 @@ def test_update_returns_validated_copy():
     assert changed.difficulty == "EXPERT"
     assert changed.arm_mode == "simulated"
     assert json.loads(json.dumps(changed.to_dict()))["arm_mode"] == "simulated"
+
+
+def test_auto_home_is_on_by_default():
+    """Sin referenciar, la tabla de posiciones apunta a otro sitio cada vez."""
+    assert AppSettings().arm_auto_home is True
+
+
+def test_old_settings_file_without_auto_home_still_loads(tmp_path):
+    """Compatibilidad: un magnus_settings.json anterior no tiene el campo."""
+    path = tmp_path / "s.json"
+    path.write_text(json.dumps({"difficulty": "EASY", "arm_mode": "simulated"}),
+                    encoding="utf-8")
+    loaded = AppSettings.load(path)
+    assert loaded.difficulty == "EASY" and loaded.arm_auto_home is True
