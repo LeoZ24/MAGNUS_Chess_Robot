@@ -208,13 +208,6 @@ SHOULDER_LIM = _limits_from_home(HOME_SHOULDER_SIGN, SHOULDER_TRAVEL_DEG)
 ELBOW_LIM    = _limits_from_home(HOME_ELBOW_SIGN, ELBOW_TRAVEL_DEG)
 
 # --- Garra: acerca/aleja el iman N52 ---
-<<<<<<< HEAD
-# Calibrar estos dos angulos empiricamente al conectar S1. Son posiciones
-# ABSOLUTAS, comunes a todas las piezas: recoger y volver al reposo para soltar.
-# Hombro y codo solo sitúan el brazo en la casilla; no controlan la altura.
-GRIPPER_ENGAGE_ANGLE  = 0    # iman CERCA de la pieza (la agarra)
-GRIPPER_RELEASE_ANGLE = 300     # iman LEJOS de la pieza (la suelta)
-=======
 # Posiciones ABSOLUTAS del servo, comunes a todas las piezas (medidas en el
 # brazo real). Hombro y codo solo situan el brazo en la casilla; la altura la
 # pone el servo, asi que el servo tiene TRES posiciones, no dos:
@@ -233,7 +226,6 @@ GRIPPER_RELEASE_ANGLE = 300     # iman LEJOS de la pieza (la suelta)
 GRIPPER_ENGAGE_ANGLE  = 0     # iman CERCA de la pieza (la agarra)
 GRIPPER_LIFT_ANGLE    = 250   # pieza agarrada y levantada (para transportarla)
 GRIPPER_RELEASE_ANGLE = 300   # iman LEJOS de la pieza (la suelta)
->>>>>>> aba6af7472366e7482ef154b1973bb5a05b157b5
 GRIPPER_SETTLE_S      = 0.4   # tiempo para que el servo llegue
 GRIPPER_GRAB_S        = 0.3   # abajo, antes de levantar: que el iman "pegue"
 
