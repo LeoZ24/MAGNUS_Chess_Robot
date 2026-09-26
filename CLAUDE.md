@@ -75,8 +75,9 @@ código: `positions.json` se graba directamente en grados de motor.
   `GET` / `STOP`, cada una con su `ACK` o un `ERR <mensaje>`.
 - **Garra: CONFIRMADA, con TRES posiciones del servo** (medidas en el brazo
   real, en el cliente): `GRIPPER_ENGAGE_ANGLE = 0` baja el imán N52 sobre la
-  pieza y la agarra; `GRIPPER_LIFT_ANGLE = 250` la **levanta sin soltarla**;
-  `GRIPPER_RELEASE_ANGLE = 300` la suelta. `GRIPPER 1` hace agarrar + levantar
+  pieza y la agarra; `GRIPPER_LIFT_ANGLE = 125` la **levanta sin soltarla**;
+  `GRIPPER_RELEASE_ANGLE = 160` la suelta. ⚠️ `servo_set` solo acepta 0–180
+  (más se recorta a 180). `GRIPPER 1` hace agarrar + levantar
   seguido y solo responde `ACK` con la pieza ya arriba. ⚠️ Sin el paso de
   levantar, el brazo arrastraba la pieza por el tablero y se llevaba por delante
   a las vecinas. No es una pinza mecánica: hombro y codo no dan altura, la da
@@ -246,9 +247,16 @@ ve mejor y el codo sigue recogido durante el giro, así que barre menos tablero.
 Al terminar **relee los dos encoders**, porque al desplegar el codo el hombro
 sostiene más brazo y puede ceder después de darlo por bueno:
 
-- Si cedió más de `MOVE_SAG_DEG` (1°; con 2° se daban por buenos justo los
-  "un par de grados" que faltaban), se corrige y la jugada sigue, hasta
+- Si cedió más de `MOVE_SAG_DEG` (1.5°), se corrige y la jugada sigue, hasta
   `MOVE_SAG_PASSES` rondas. Abortar por eso dejaría la pieza a medio camino.
+  Con 2° se daban por buenos justo los "un par de grados" que faltaban; con 1°
+  (igual a `TOLERANCE_DEG`) cualquier temblor disparaba otro repaso.
+- El repaso va **directo** (`approach=False`), sin la compensación de juego:
+  con ella el eje retrocedía `BACKLASH_DEG`, se volvía a pasar, retrocedía… y
+  el brazo se quedaba "buscando" la casilla hasta el timeout del host.
+- **Presupuesto de tiempo:** un `MOVE` deja de afinar a los `MOVE_BUDGET_S`
+  (15 s) y responde con lo que haya (`ACK` si está dentro de `MOVE_FAIL_DEG`,
+  si no `ERR`). El host espera `command_timeout` = 45 s, así que nunca corta él.
 - Si no se deja corregir, `ERR ... no mantuvo ...`: la retención no está
   haciendo su trabajo y hay que decirlo, no mover el brazo a ciegas.
 

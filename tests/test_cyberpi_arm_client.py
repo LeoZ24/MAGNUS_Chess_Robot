@@ -120,10 +120,24 @@ def client(monkeypatch):
     # No alterar el archivo de produccion para facilitar su importacion.
     with pytest.raises(StartupReached):
         spec.loader.exec_module(module)
+    # Reloj simulado: solo avanza con los sleep, como si el brazo tardara.
+    clock = [0.0]
+
     def sleep(seconds):
         hardware.last_sleep = seconds
+        clock[0] += seconds
 
-    module.time = SimpleNamespace(sleep=sleep)
+    module.time = SimpleNamespace(sleep=sleep, time=lambda: clock[0])
+
+    # EM_turn bloquea mientras gira: tambien consume tiempo (rpm * 6 = grados
+    # por segundo, mas el arranque y la frenada del motor).
+    real_turn = hardware.EM_turn
+
+    def timed_turn(delta, speed, port):
+        clock[0] += abs(delta) / (speed * 6.0) + 0.3
+        real_turn(delta, speed, port)
+
+    hardware.EM_turn = timed_turn
     module.VERBOSE = False
     return module, hardware
 
@@ -459,7 +473,7 @@ def test_lift_holds_the_piece_between_grab_and_release(client):
     """Levantar no es soltar: el angulo de transporte queda entre los otros dos."""
     module, _ = client
     assert (module.GRIPPER_ENGAGE_ANGLE, module.GRIPPER_LIFT_ANGLE,
-            module.GRIPPER_RELEASE_ANGLE) == (0, 250, 300)
+            module.GRIPPER_RELEASE_ANGLE) == (0, 125, 160)
     assert (module.GRIPPER_ENGAGE_ANGLE < module.GRIPPER_LIFT_ANGLE
             < module.GRIPPER_RELEASE_ANGLE)
 
@@ -514,14 +528,78 @@ def test_approach_from_the_wrong_side_survives_a_short_turn(client):
 
 
 def test_small_sag_is_corrected_too(client):
-    """Ceder 1.5 grados antes se daba por bueno: justo "un par de grados"."""
+    """Ceder casi 2 grados antes se daba por bueno: justo "un par de grados"."""
     module, hardware = client
     hardware.angles["EM2"] = -30.0
 
     def change_load(port):
         if port == "EM2":
-            hardware.angles["EM1"] -= 1.5
+            hardware.angles["EM1"] -= 1.8
 
     hardware.after_turn = change_load
     # Codo de -30 a -20: en positivo, un solo giro y sin compensacion.
     assert module.handle("MOVE 30 -20") == "ACK MOVE 30.0 -20.0"
+
+
+# --------------------------------------------------------------------------- #
+# Que el brazo no se quede "buscando" la casilla hasta el timeout del host
+# --------------------------------------------------------------------------- #
+
+def test_move_always_answers_within_its_time_budget(client):
+    """Un eje que tiembla y no se asienta no puede comerse el timeout del host.
+
+    El encoder lee siempre 4 grados arriba o abajo del sitio real, alternando:
+    el eje nunca "llega". Antes el brazo se quedaba ajustando adelante y atras
+    hasta que el host cortaba a los 20 s; ahora el MOVE deja de afinar a los
+    MOVE_BUDGET_S y responde con lo que haya.
+    """
+    module, hardware = client
+    wobble = {"EM1": 4.0, "EM2": 4.0}
+    real_read = hardware.EM_get_angle
+
+    def wobbling(port):
+        wobble[port] = -wobble[port]
+        return real_read(port) + wobble[port]
+
+    hardware.EM_get_angle = wobbling
+    hardware.power_gain = 2.0
+    # Presupuesto corto para que se note: sin el, este caso tarda mas de 10 s.
+    module.MOVE_BUDGET_S = 3.0
+    start = module.time.time()
+    try:
+        module.handle("MOVE 30 -20")
+    except ValueError:
+        pass                         # ERR tambien vale: lo que importa es responder
+    # El paso en curso termina aunque se pase del limite: margen de 2 s.
+    assert module.time.time() - start < module.MOVE_BUDGET_S + 2.0
+
+
+def test_default_budget_leaves_room_before_the_host_gives_up(client):
+    from magnus.arm.backend import CyberPiBackend
+    module, _ = client
+    assert module.MOVE_BUDGET_S + 10.0 < CyberPiBackend().command_timeout
+
+
+def test_sag_correction_does_not_redo_the_backlash_approach(client):
+    """El repaso de unos grados va directo; con la compensacion de juego el
+    eje retrocedia, se volvia a pasar y el brazo quedaba ajustando sin fin."""
+    module, hardware = client
+    hardware.angles["EM2"] = -30.0
+
+    def change_load(port):
+        if port == "EM2" and hardware.angles["EM1"] >= 30.0:
+            hardware.angles["EM1"] += 2.0      # el hombro se PASA al mover el codo
+
+    hardware.after_turn = change_load
+    assert module.handle("MOVE 30 -20") == "ACK MOVE 30.0 -20.0"
+    shoulder_turns = [t[0] for t in hardware.turns if t[2] == "EM1"]
+    # Ida (30) y un solo repaso de -2: sin el retroceso de BACKLASH_DEG.
+    assert shoulder_turns == [30.0, -2.0]
+
+
+def test_gripper_angles_fit_the_servo_range(client):
+    """servo_set solo acepta de 0 a 180: un angulo mayor se recorta."""
+    module, _ = client
+    for angle in (module.GRIPPER_ENGAGE_ANGLE, module.GRIPPER_LIFT_ANGLE,
+                  module.GRIPPER_RELEASE_ANGLE):
+        assert 0 <= angle <= 180

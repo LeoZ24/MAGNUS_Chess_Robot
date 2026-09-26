@@ -169,7 +169,7 @@ class CyberPiBackend(ArmBackend):
         port: int = 5555,
         *,
         accept_timeout: float = 90.0,
-        command_timeout: float = 20.0,
+        command_timeout: float = 45.0,
         home_timeout: float = 75.0,
     ):
         """
@@ -178,7 +178,9 @@ class CyberPiBackend(ArmBackend):
             port: puerto TCP. Debe coincidir con PORT en el cliente CyberPi.
             accept_timeout: segundos a esperar a que la CyberPi se conecte.
             command_timeout: segundos máximos a esperar el ACK de un comando.
-                Debe ser mayor que el movimiento físico más lento del brazo.
+                Debe ser mayor que el movimiento físico más lento del brazo:
+                el cliente deja de afinar a los ``MOVE_BUDGET_S`` (15 s) y
+                responde, así que 45 s deja margen para garra y red.
             home_timeout: segundos máximos para el referenciado.  Es aparte
                 porque ``HOME`` busca dos topes con dos pasadas cada uno y
                 tarda bastante más que un movimiento normal.

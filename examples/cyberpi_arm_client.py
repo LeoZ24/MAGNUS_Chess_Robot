@@ -79,12 +79,20 @@ MOVE_PROGRESS_RATIO = 0.6     # fraccion del tramo pedido que una pasada debe
                               # no lo detectaba nunca y la velocidad no subia.
 MOVE_FAIL_DEG       = 3.0     # error final que se considera fallo -> ERR
 MOVE_SETTLE_S       = 0.15    # dejar que el encoder se asiente entre pasadas
-MOVE_SAG_DEG        = 1.0     # cuanto puede ceder un eje mientras se mueve el
-                              # otro antes de volver a corregirlo. Estaba en 2:
-                              # un hombro que cedia 1.9 grados se daba por bueno,
-                              # y eso es justo "se queda a un par de grados".
+MOVE_SAG_DEG        = 1.5     # cuanto puede ceder un eje mientras se mueve el
+                              # otro antes de volver a corregirlo. Con 2 un
+                              # hombro que cedia 1.9 se daba por bueno; con 1
+                              # (= TOLERANCE_DEG) cualquier temblor de encoder
+                              # disparaba otro repaso y el brazo no paraba.
 MOVE_SAG_PASSES     = 2       # repasos como maximo (corregir un eje puede
                               # mover un poco el otro)
+
+# Tiempo maximo que un MOVE puede pasar AFINANDO. Pasado esto se deja de
+# corregir y se responde con lo que haya (ACK si esta dentro de MOVE_FAIL_DEG,
+# ERR si no). Tiene que ser bastante menor que el timeout del host
+# (CyberPiBackend.command_timeout, 45 s): antes el brazo podia quedarse
+# ajustando adelante y atras hasta que el host cortaba a los 20 s.
+MOVE_BUDGET_S       = 15.0
 
 # --- Impulsos de potencia del ultimo tramo ---
 # La potencia cruda da par pero no sabe frenar: si el impulso dura de mas, el
@@ -105,8 +113,11 @@ CREEP_PULSE_MIN_S   = 0.05    # impulso mas corto (y el que mide el ritmo)
 CREEP_PULSE_MAX_S   = 0.20    # nunca empujar mas de esto sin volver a mirar
 CREEP_REST_S        = 0.06    # pausa para que el encoder se asiente
 CREEP_MIN_DELTA_DEG = 0.3     # impulso que mueve menos que esto = falta par
-CREEP_MAX_PULSES    = 30      # cota dura: nunca un bucle sin salida
-CREEP_MAX_FLIPS     = 4       # veces que puede cruzar el objetivo antes de dejarlo
+CREEP_MAX_PULSES    = 20      # cota dura: nunca un bucle sin salida
+CREEP_MAX_FLIPS     = 2       # veces que puede cruzar el objetivo antes de
+                              # dejarlo. Con 4 el eje oscilaba alrededor de la
+                              # casilla: cruzar dos veces ya dice que mas
+                              # impulsos no lo van a clavar.
 
 # Retencion nativa del shield: sostiene los ejes entre movimientos, incluso
 # mientras el host piensa o mueve la garra. No necesita un bucle de correccion.
@@ -213,8 +224,10 @@ ELBOW_LIM    = _limits_from_home(HOME_ELBOW_SIGN, ELBOW_TRAVEL_DEG)
 # pone el servo, asi que el servo tiene TRES posiciones, no dos:
 #
 #   ENGAGE  (0)    iman abajo, sobre la pieza: la agarra
-#   LIFT    (250)  iman arriba CON la pieza: la levanta sin soltarla
-#   RELEASE (300)  iman del todo arriba: la pieza se desprende
+#   LIFT    (125)  iman arriba CON la pieza: la levanta sin soltarla
+#   RELEASE (160)  iman del todo arriba: la pieza se desprende
+#
+# ⚠️ servo_set solo acepta de 0 a 180: un angulo mayor se recorta a 180.
 #
 # ⚠️ Sin LIFT el brazo arrastraba la pieza por el tablero y se llevaba por
 # delante a las vecinas. GRIPPER 1 hace las dos cosas seguidas (agarrar y
@@ -224,9 +237,9 @@ ELBOW_LIM    = _limits_from_home(HOME_ELBOW_SIGN, ELBOW_TRAVEL_DEG)
 # Si al subir, la pieza se SUELTA, LIFT esta demasiado cerca de RELEASE: bajalo.
 # Si la pieza sigue rozando el tablero, subelo. None = no levantar (antiguo).
 GRIPPER_ENGAGE_ANGLE  = 0     # iman CERCA de la pieza (la agarra)
-GRIPPER_LIFT_ANGLE    = 250   # pieza agarrada y levantada (para transportarla)
-GRIPPER_RELEASE_ANGLE = 300   # iman LEJOS de la pieza (la suelta)
-GRIPPER_SETTLE_S      = 0.4   # tiempo para que el servo llegue
+GRIPPER_LIFT_ANGLE    = 125   # pieza agarrada y levantada (para transportarla)
+GRIPPER_RELEASE_ANGLE = 160   # iman LEJOS de la pieza (la suelta)
+GRIPPER_SETTLE_S      = 1     # tiempo para que el servo llegue
 GRIPPER_GRAB_S        = 0.3   # abajo, antes de levantar: que el iman "pegue"
 
 # Segundos que se espera al hotspot antes de rendirse y reintentar. Sin este
@@ -324,6 +337,15 @@ def _log(text):
 
 # ======================= MOVIMIENTO =======================
 
+# Instante (time.time) a partir del cual un MOVE deja de afinar. 0 = sin limite
+# (fuera de un MOVE, p. ej. durante HOME).
+_deadline = 0.0
+
+
+def _out_of_time():
+    return _deadline > 0 and time.time() > _deadline
+
+
 def _clamp(v, lim, name):
     lo, hi = lim
     if not lo <= v <= hi:
@@ -350,7 +372,7 @@ def _drive_turns(target, port, current, name):
     speed = MOVE_SPEED_RPM
     for _ in range(MOVE_MAX_PASSES):
         delta = target - current
-        if abs(delta) <= TOLERANCE_DEG:
+        if abs(delta) <= TOLERANCE_DEG or _out_of_time():
             break
         _hw_turn(delta, speed, port)
         time.sleep(MOVE_SETTLE_S)
@@ -386,7 +408,7 @@ def _creep_to(target, port, name):
     try:
         for _ in range(CREEP_MAX_PULSES):
             error = target - current
-            if abs(error) <= TOLERANCE_DEG:
+            if abs(error) <= TOLERANCE_DEG or _out_of_time():
                 break
             sign = 1 if error > 0 else -1
             if last_sign != 0 and sign != last_sign:
@@ -444,11 +466,16 @@ def _creep_to(target, port, name):
     return current
 
 
-def _move_axis(target, port, lim, name):
+def _move_axis(target, port, lim, name, approach=True):
     """Lleva el eje a ``target`` (grados de motor absolutos) y lo VERIFICA.
 
     Dos fases: el tramo grueso con EM_turn y, si aun falta, el ultimo tramo a
     impulsos de potencia. Devuelve el angulo realmente alcanzado.
+
+    ``approach=False`` salta la compensacion de juego: es para los repasos de
+    unos pocos grados. Con ella, un eje que se habia pasado un poco retrocedia
+    BACKLASH_DEG, volvia a pasarse, retrocedia otra vez... y el brazo se
+    quedaba "buscando" la casilla hasta el timeout del host.
     """
     target = _clamp(target, lim, name)
     _hw_hold(HOLD_ENABLED, port)
@@ -458,7 +485,8 @@ def _move_axis(target, port, lim, name):
     # poco para que el tramo final entre siempre en el mismo sentido. Con
     # _drive_turns y no con un solo giro: si el giro se queda corto, el eje
     # seguiria del lado malo y la compensacion no serviria de nada.
-    if BACKLASH_DEG > 0 and (target - start) * APPROACH_SIGN < -TOLERANCE_DEG:
+    if (approach and BACKLASH_DEG > 0
+            and (target - start) * APPROACH_SIGN < -TOLERANCE_DEG):
         pre = max(lim[0], min(lim[1], target - APPROACH_SIGN * BACKLASH_DEG))
         _drive_turns(pre, port, start, name)
 
@@ -495,9 +523,19 @@ def _move_all(shoulder, elbow):
     se corrige, y si no se deja corregir es que la retencion no esta haciendo su
     trabajo y hay que decirlo en vez de mover el brazo a ciegas.
     """
+    global _deadline
     _clamp(shoulder, SHOULDER_LIM, "hombro")
     _clamp(elbow, ELBOW_LIM, "codo")
     _hw_hold(HOLD_ENABLED, "all")
+    _deadline = time.time() + MOVE_BUDGET_S
+    try:
+        return _move_all_timed(shoulder, elbow)
+    finally:
+        _deadline = 0.0
+
+
+def _move_all_timed(shoulder, elbow):
+    """El cuerpo de _move_all, ya dentro del presupuesto de tiempo."""
 
     shoulder_axis = (shoulder, SHOULDER_PORT, SHOULDER_LIM, "hombro")
     elbow_axis = (elbow, ELBOW_PORT, ELBOW_LIM, "codo")
@@ -512,6 +550,9 @@ def _move_all(shoulder, elbow):
     # verdad lo da la verificacion final, con la pose que queda de verdad.
     # Mas de una ronda porque corregir un eje cambia la carga del otro.
     for _ in range(MOVE_SAG_PASSES):
+        if _out_of_time():
+            _log("  sin tiempo para repasar")
+            break
         time.sleep(MOVE_SETTLE_S)
         sagged = False
         for target, port, lim, name in order:
@@ -519,7 +560,7 @@ def _move_all(shoulder, elbow):
                 sagged = True
                 _log("  " + name + " cedio, repaso")
                 try:
-                    _move_axis(target, port, lim, name)
+                    _move_axis(target, port, lim, name, approach=False)
                 except ValueError:
                     pass
         if not sagged:
