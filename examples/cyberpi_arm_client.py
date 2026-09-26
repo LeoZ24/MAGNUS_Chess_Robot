@@ -197,8 +197,8 @@ ELBOW_LIM    = _limits_from_home(HOME_ELBOW_SIGN, ELBOW_TRAVEL_DEG)
 # Calibrar estos dos angulos empiricamente al conectar S1. Son posiciones
 # ABSOLUTAS, comunes a todas las piezas: recoger y volver al reposo para soltar.
 # Hombro y codo solo sitúan el brazo en la casilla; no controlan la altura.
-GRIPPER_ENGAGE_ANGLE  = 90    # iman CERCA de la pieza (la agarra)
-GRIPPER_RELEASE_ANGLE = 0     # iman LEJOS de la pieza (la suelta)
+GRIPPER_ENGAGE_ANGLE  = 0    # iman CERCA de la pieza (la agarra)
+GRIPPER_RELEASE_ANGLE = 300     # iman LEJOS de la pieza (la suelta)
 GRIPPER_SETTLE_S      = 0.4   # tiempo para que el servo llegue
 
 # Segundos que se espera al hotspot antes de rendirse y reintentar. Sin este
