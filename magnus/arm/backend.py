@@ -65,7 +65,12 @@ class ArmBackend(ABC):
 
     @abstractmethod
     def set_gripper(self, engaged: bool) -> None:
-        """Activa (agarrar) o desactiva (soltar) la garra (servo 3)."""
+        """Activa (agarrar) o desactiva (soltar) la garra (servo 3).
+
+        ``engaged=True`` no vuelve hasta que la pieza está agarrada Y
+        levantada: el ``move_to`` siguiente no puede arrastrarla por el
+        tablero.  En la CyberPi es el comando ``GRIPPER 1`` (ver el cliente).
+        """
 
     def home(self) -> None:
         """Lleva el brazo a su referencia física y declara ahí el cero.

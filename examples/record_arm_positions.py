@@ -17,6 +17,9 @@ Hay dos modos:
          sueltos, el brazo no flexa igual que cuando lo empujan los motores,
          así que una tabla medida a mano se queda corta de forma sistemática
          al reproducirla — sin que el encoder note nada y sin ningún error.
+         Parte de lo ya grabado, así que recalibrar es solo corregir.
+         `p` prueba a recoger la pieza de verdad y `v` comprueba que la orden
+         repite llegando desde lejos, como en la partida.
 
   (por defecto) referencia con HOME, envía STOP y tú colocas el brazo a mano;
          se leen los dos encoders. Más rápido, menos fiel. Sostén el peso del
@@ -27,10 +30,11 @@ Incluye la zona `park` (reposo fuera del tablero), a la que el brazo se retira
 al terminar cada jugada:  python3 examples/record_arm_positions.py park --jog
 
 Cada destino requiere una sola lectura de hombro y codo. S1 se calibra aparte
-con dos ángulos comunes a todas las piezas (recoger y soltar). No apagues
-el shield ni reinicies la CyberPi entre lecturas: perderías el cero. No se envía
-ZERO, MOVE ni órdenes a la garra. No escribe archivos. Ctrl+C termina y muestra
-lo medido hasta ese momento.
+con tres ángulos comunes a todas las piezas (agarrar, levantar y soltar, en el
+cliente de la CyberPi). No apagues el shield ni reinicies la CyberPi entre
+lecturas: perderías el cero. Nunca se envía ZERO; MOVE y la garra solo en modo
+--jog. Solo escribe positions.json con --write. Ctrl+C termina y muestra lo
+medido hasta ese momento.
 """
 
 from __future__ import annotations
@@ -106,10 +110,85 @@ def _write_positions(path: Path, captured: dict) -> Path:
 JOG_HELP = """
   h+5 / h-5   mover el HOMBRO 5 grados (cualquier número vale)
   c+5 / c-5   mover el CODO 5 grados
+  h=85        llevar el hombro a 85 exactos (c=-120 para el codo)
+  h+2 c-1     varios ajustes en la misma línea
+  p           PROBAR: recoger la pieza (agarra y levanta) y volver a soltarla
+  v           VERIFICAR: alejarse por un lado y por el otro y volver, como
+              en la partida; si la punta no cae igual, sube BACKLASH_DEG
   Enter       grabar esta posición y pasar a la siguiente
   s           saltar esta posición sin grabarla
   q           terminar
 """
+
+# Cuánto se aleja `v` antes de volver. Lo bastante para que el eje llegue con
+# un giro largo (como jugando), no con un paso de ajuste.
+VERIFY_AWAY_DEG = 15.0
+
+
+class JogInputError(ValueError):
+    """Una línea de ajuste que no se entiende."""
+
+
+def _parse_jog(orden: str, shoulder: float, elbow: float) -> "tuple[float, float]":
+    """Aplica una línea de ajustes (``h+5``, ``c=-120``, ``h+2 c-1``).
+
+    Devuelve la nueva orden, o lanza ``JogInputError`` sin aplicar nada si
+    alguna parte no se entiende: medio ajuste aplicado confunde más que ninguno.
+    """
+    tokens = orden.replace(",", " ").split()
+    if not tokens:
+        raise JogInputError("línea vacía")
+    for token in tokens:
+        eje, resto = token[:1], token[1:].strip()
+        if eje not in ("h", "c") or not resto or resto[0] not in "+-=":
+            raise JogInputError(f"no entiendo {token!r}")
+        try:
+            valor = float(resto[1:] if resto[0] == "=" else resto)
+        except ValueError:
+            raise JogInputError(f"no entiendo {token!r}") from None
+        if not math.isfinite(valor):
+            raise JogInputError(f"no entiendo {token!r}")
+        if eje == "h":
+            shoulder = valor if resto[0] == "=" else shoulder + valor
+        else:
+            elbow = valor if resto[0] == "=" else elbow + valor
+    return shoulder, elbow
+
+
+def _away(angle: float, delta: float, limits: "tuple[float, float]") -> float:
+    """``angle + delta`` sin salirse de los límites del eje."""
+    low, high = limits
+    return max(low, min(high, angle + delta))
+
+
+def _verify(backend, shoulder: float, elbow: float, limits) -> None:
+    """Llega a la orden desde los dos lados, con giros largos, y la enseña.
+
+    Así llega el brazo jugando: desde otra casilla, no con un paso de ajuste.
+    Si la punta cae en sitios distintos según el lado, la reductora tiene más
+    juego del que compensa el cliente (``BACKLASH_DEG``).
+    """
+    for lado, signo in (("negativo", -1.0), ("positivo", 1.0)):
+        backend.move_to(_away(shoulder, signo * VERIFY_AWAY_DEG, limits[0]),
+                        _away(elbow, signo * VERIFY_AWAY_DEG, limits[1]))
+        backend.move_to(shoulder, elbow)
+        reached = backend.get_position()
+        print(f"   llegando desde el lado {lado}: encoder "
+              f"{reached[0]:+.1f} {reached[1]:+.1f}")
+        input("   Mira dónde cae la punta y pulsa Enter: ")
+    print("   Si cayó en el MISMO sitio las dos veces, la orden repite. Si no,\n"
+          "   sube BACKLASH_DEG en el cliente de la CyberPi y vuelve a subirlo.")
+
+
+def _try_pick(backend) -> None:
+    """Recoge la pieza como en la partida (agarra y levanta) y la suelta.
+
+    Es la prueba de verdad de una casilla: si el imán no la coge centrada, o
+    la arrastra al levantarla, la orden aún no está bien.
+    """
+    backend.set_gripper(True)
+    input("   Pieza levantada? Enter la suelta: ")
+    backend.set_gripper(False)
 
 
 def _jog_capture(backend, squares, limits, seeds, captured) -> None:
@@ -127,6 +206,8 @@ def _jog_capture(backend, squares, limits, seeds, captured) -> None:
     """
     print("\nModo JOG: el brazo se mueve solo; no lo empujes con la mano.")
     print(JOG_HELP)
+    # Imán arriba, como cuando el brazo llega a una casilla jugando.
+    backend.set_gripper(False)
     for square in squares:
         target = seeds.get(square)
         if target is None:
@@ -176,19 +257,19 @@ def _jog_capture(backend, squares, limits, seeds, captured) -> None:
                         print(f'   grabada {square}: '
                               f'{json.dumps(angles, allow_nan=False)}', flush=True)
                 raise KeyboardInterrupt
-            eje, _, cantidad = orden.partition("+") if "+" in orden else orden.partition("-")
-            signo = 1.0 if "+" in orden else -1.0
-            try:
-                paso = signo * float(cantidad)
-            except ValueError:
-                print("   No te he entendido." + JOG_HELP)
+            if orden in ("p", "v"):
+                try:
+                    if orden == "p":
+                        _try_pick(backend)
+                    else:
+                        _verify(backend, shoulder, elbow, limits)
+                except ArmBackendError as exc:
+                    print(f"   Falló: {exc}")
                 continue
-            if eje.strip() == "h":
-                shoulder += paso
-            elif eje.strip() == "c":
-                elbow += paso
-            else:
-                print("   El eje es 'h' (hombro) o 'c' (codo)." + JOG_HELP)
+            try:
+                shoulder, elbow = _parse_jog(orden, shoulder, elbow)
+            except JogInputError as exc:
+                print(f"   No te he entendido ({exc})." + JOG_HELP)
 
 
 def main() -> int:
