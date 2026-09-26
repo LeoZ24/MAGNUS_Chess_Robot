@@ -19,7 +19,7 @@
 #   ZERO                            ACK ZERO       (pose actual = 0,0)
 #   LIMITS                          ACK LIMITS <sh_lo> <sh_hi> <el_lo> <el_hi>
 #   MOVE <hombro> <codo>            ACK MOVE <hombro> <codo>  (logrados)
-#   GRIPPER <0|1>                   ACK GRIPPER    (1=acerca iman, 0=aleja iman)
+#   GRIPPER <0|1>                   ACK GRIPPER    (1=agarra y LEVANTA, 0=suelta)
 #   GET                             ACK POS <hombro> <codo>
 #   STOP                            ACK STOP
 #   (invalido / fallo)              ERR <mensaje>
@@ -79,8 +79,12 @@ MOVE_PROGRESS_RATIO = 0.6     # fraccion del tramo pedido que una pasada debe
                               # no lo detectaba nunca y la velocidad no subia.
 MOVE_FAIL_DEG       = 3.0     # error final que se considera fallo -> ERR
 MOVE_SETTLE_S       = 0.15    # dejar que el encoder se asiente entre pasadas
-MOVE_SAG_DEG        = 2.0     # cuanto puede ceder un eje mientras se mueve el
-                              # otro antes de volver a corregirlo
+MOVE_SAG_DEG        = 1.0     # cuanto puede ceder un eje mientras se mueve el
+                              # otro antes de volver a corregirlo. Estaba en 2:
+                              # un hombro que cedia 1.9 grados se daba por bueno,
+                              # y eso es justo "se queda a un par de grados".
+MOVE_SAG_PASSES     = 2       # repasos como maximo (corregir un eje puede
+                              # mover un poco el otro)
 
 # --- Impulsos de potencia del ultimo tramo ---
 # La potencia cruda da par pero no sabe frenar: si el impulso dura de mas, el
@@ -140,10 +144,20 @@ ASSIST_KIND    = "dc"     # CONFIRMADO: 2 cables = puerto de motor
 ASSIST_POWER   = 35       # % de empuje (empieza bajo y sube)
 ASSIST_SIGN    = 1        # +1 o -1: sentido en el que AYUDA al hombro (ver arriba)
 
-# Juego de la transmision (backlash). Si el brazo no repite al llegar a un
-# angulo desde un lado o desde el otro, sube esto: el ultimo tramo entrara
-# siempre en el mismo sentido (APPROACH_SIGN). 0 = desactivado.
-BACKLASH_DEG  = 0.0
+# Juego de la transmision (backlash). La reductora INTERNA del motor encoder
+# tiene holgura, y el encoder no la ve: el mismo angulo de encoder deja la punta
+# en dos sitios segun se llegue desde un lado o desde el otro. Con esto activo,
+# el ultimo tramo entra SIEMPRE en el mismo sentido (APPROACH_SIGN): si el eje
+# viene del lado contrario, primero se pasa BACKLASH_DEG y luego vuelve.
+#
+# Importa el doble porque la tabla se graba con pasos pequenos (--jog) y se
+# juega con giros largos desde cualquier casilla: sin entrada unidireccional,
+# grabacion y partida llegan cada una por su lado y no coinciden.
+#
+# Tiene que ser MAYOR que el juego real. Para medirlo, la tecla `v` de
+# `record_arm_positions.py --jog` lleva el brazo a la misma orden desde los dos
+# lados. 0 = desactivado.
+BACKLASH_DEG  = 3.0
 APPROACH_SIGN = 1             # +1 = el tramo final siempre va en positivo
 
 # --- Limites de seguridad (grados de MOTOR) ---
@@ -194,12 +208,34 @@ SHOULDER_LIM = _limits_from_home(HOME_SHOULDER_SIGN, SHOULDER_TRAVEL_DEG)
 ELBOW_LIM    = _limits_from_home(HOME_ELBOW_SIGN, ELBOW_TRAVEL_DEG)
 
 # --- Garra: acerca/aleja el iman N52 ---
+<<<<<<< HEAD
 # Calibrar estos dos angulos empiricamente al conectar S1. Son posiciones
 # ABSOLUTAS, comunes a todas las piezas: recoger y volver al reposo para soltar.
 # Hombro y codo solo sitúan el brazo en la casilla; no controlan la altura.
 GRIPPER_ENGAGE_ANGLE  = 0    # iman CERCA de la pieza (la agarra)
 GRIPPER_RELEASE_ANGLE = 300     # iman LEJOS de la pieza (la suelta)
+=======
+# Posiciones ABSOLUTAS del servo, comunes a todas las piezas (medidas en el
+# brazo real). Hombro y codo solo situan el brazo en la casilla; la altura la
+# pone el servo, asi que el servo tiene TRES posiciones, no dos:
+#
+#   ENGAGE  (0)    iman abajo, sobre la pieza: la agarra
+#   LIFT    (250)  iman arriba CON la pieza: la levanta sin soltarla
+#   RELEASE (300)  iman del todo arriba: la pieza se desprende
+#
+# ⚠️ Sin LIFT el brazo arrastraba la pieza por el tablero y se llevaba por
+# delante a las vecinas. GRIPPER 1 hace las dos cosas seguidas (agarrar y
+# levantar) y solo responde ACK cuando la pieza ya esta arriba, asi que el
+# siguiente MOVE nunca sale con la pieza apoyada en el tablero.
+#
+# Si al subir, la pieza se SUELTA, LIFT esta demasiado cerca de RELEASE: bajalo.
+# Si la pieza sigue rozando el tablero, subelo. None = no levantar (antiguo).
+GRIPPER_ENGAGE_ANGLE  = 0     # iman CERCA de la pieza (la agarra)
+GRIPPER_LIFT_ANGLE    = 250   # pieza agarrada y levantada (para transportarla)
+GRIPPER_RELEASE_ANGLE = 300   # iman LEJOS de la pieza (la suelta)
+>>>>>>> aba6af7472366e7482ef154b1973bb5a05b157b5
 GRIPPER_SETTLE_S      = 0.4   # tiempo para que el servo llegue
+GRIPPER_GRAB_S        = 0.3   # abajo, antes de levantar: que el iman "pegue"
 
 # Segundos que se espera al hotspot antes de rendirse y reintentar. Sin este
 # limite la placa se cuelga esperando Wi-Fi y cuesta subirle un programa nuevo.
@@ -427,11 +463,12 @@ def _move_axis(target, port, lim, name):
     start = _hw_get_angle(port)
 
     # Compensacion de juego: si vinieramos "del lado contrario", pasarse un
-    # poco para que el tramo final entre siempre en el mismo sentido.
-    if BACKLASH_DEG > 0 and (target - start) * APPROACH_SIGN < 0:
+    # poco para que el tramo final entre siempre en el mismo sentido. Con
+    # _drive_turns y no con un solo giro: si el giro se queda corto, el eje
+    # seguiria del lado malo y la compensacion no serviria de nada.
+    if BACKLASH_DEG > 0 and (target - start) * APPROACH_SIGN < -TOLERANCE_DEG:
         pre = max(lim[0], min(lim[1], target - APPROACH_SIGN * BACKLASH_DEG))
-        _hw_turn(pre - start, MOVE_SPEED_RPM, port)
-        time.sleep(MOVE_SETTLE_S)
+        _drive_turns(pre, port, start, name)
 
     current = _hw_get_angle(port)
     if port == SHOULDER_PORT and abs(target - current) > TOLERANCE_DEG:
@@ -481,14 +518,20 @@ def _move_all(shoulder, elbow):
 
     # Repaso del eje que haya cedido. Aqui no se da error: el diagnostico de
     # verdad lo da la verificacion final, con la pose que queda de verdad.
-    time.sleep(MOVE_SETTLE_S)
-    for target, port, lim, name in order:
-        if abs(target - _hw_get_angle(port)) > MOVE_SAG_DEG:
-            _log("  " + name + " cedio, repaso")
-            try:
-                _move_axis(target, port, lim, name)
-            except ValueError:
-                pass
+    # Mas de una ronda porque corregir un eje cambia la carga del otro.
+    for _ in range(MOVE_SAG_PASSES):
+        time.sleep(MOVE_SETTLE_S)
+        sagged = False
+        for target, port, lim, name in order:
+            if abs(target - _hw_get_angle(port)) > MOVE_SAG_DEG:
+                sagged = True
+                _log("  " + name + " cedio, repaso")
+                try:
+                    _move_axis(target, port, lim, name)
+                except ValueError:
+                    pass
+        if not sagged:
+            break
 
     # No devolver la lectura anterior como si siguiera siendo la actual.
     got_sh = _hw_get_angle(SHOULDER_PORT)
@@ -500,6 +543,23 @@ def _move_all(shoulder, elbow):
                              + " (quedo en " + str(current)
                              + "). Revisa retencion, bateria y carga del brazo.")
     return got_sh, got_el
+
+
+# ======================= GARRA =======================
+
+def _grab():
+    """Baja el iman sobre la pieza, la agarra y la LEVANTA sin soltarla.
+
+    Levantarla es lo que evita arrastrarla por el tablero en el MOVE siguiente
+    (y llevarse por delante a las piezas vecinas). Todo va en un mismo comando
+    para que el host no tenga que acordarse: cuando llega el ACK, la pieza ya
+    esta arriba.
+    """
+    _hw_servo(GRIPPER_ENGAGE_ANGLE)
+    time.sleep(GRIPPER_SETTLE_S + GRIPPER_GRAB_S)
+    if GRIPPER_LIFT_ANGLE is not None:
+        _hw_servo(GRIPPER_LIFT_ANGLE)
+        time.sleep(GRIPPER_SETTLE_S)
 
 
 # ======================= REFERENCIADO (HOME) =======================
@@ -611,9 +671,11 @@ def handle(line):
     if cmd == "GRIPPER":
         if len(parts) != 2:
             return "ERR GRIPPER requiere 1 argumento"
-        engaged = parts[1] == "1"
-        _hw_servo(GRIPPER_ENGAGE_ANGLE if engaged else GRIPPER_RELEASE_ANGLE)
-        time.sleep(GRIPPER_SETTLE_S)
+        if parts[1] == "1":
+            _grab()
+        else:
+            _hw_servo(GRIPPER_RELEASE_ANGLE)
+            time.sleep(GRIPPER_SETTLE_S)
         return "ACK GRIPPER"
 
     if cmd == "GET":

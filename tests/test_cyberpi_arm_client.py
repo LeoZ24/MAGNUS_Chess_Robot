@@ -137,7 +137,10 @@ def test_move_holds_both_axes_and_returns_final_shoulder_reading(client):
             hardware.angles["EM1"] -= 0.5
 
     hardware.after_turn = change_load
-    assert module.handle("MOVE 30 -20") == "ACK MOVE 29.5 -20.0"
+    # El codo va en negativo y entra en positivo (juego de la transmision):
+    # dos giros, medio grado de hombro cada uno. Menos que MOVE_SAG_DEG, asi
+    # que no se repasa; lo que importa es que se devuelve la lectura FINAL.
+    assert module.handle("MOVE 30 -20") == "ACK MOVE 29.0 -20.0"
     assert all(hardware.locked.values())
 
 
@@ -232,8 +235,10 @@ def test_both_axes_start_at_the_gross_speed(client):
     """
     module, hardware = client
     module.handle("MOVE 10 -10")
+    back = module.BACKLASH_DEG
     assert hardware.turns == [(10.0, module.MOVE_SPEED_RPM, "EM1"),
-                              (-10.0, module.MOVE_SPEED_RPM, "EM2")]
+                              (-10.0 - back, module.MOVE_SPEED_RPM, "EM2"),
+                              (back, module.MOVE_SPEED_RPM, "EM2")]
 
 
 def test_backlash_stays_in_limits_and_rereads_before_relative_correction(client):
@@ -429,3 +434,94 @@ def test_assist_stops_even_if_the_shoulder_fails(client):
         module.handle("MOVE 30 -20")
     empujes = [event for event in hardware.events if event[0] == "assist"]
     assert empujes and empujes[-1][1] == 0
+
+
+# --------------------------------------------------------------------------- #
+# Garra: agarrar, LEVANTAR y soltar
+# --------------------------------------------------------------------------- #
+
+def _record_servo(hardware):
+    moves = []
+    hardware.servo_set = lambda angle, port: moves.append((angle, port))
+    return moves
+
+
+def test_grab_lowers_the_magnet_and_then_lifts_the_piece(client):
+    """Sin levantarla, el brazo arrastraba la pieza y se llevaba a las vecinas."""
+    module, hardware = client
+    moves = _record_servo(hardware)
+    assert module.handle("GRIPPER 1") == "ACK GRIPPER"
+    assert moves == [(module.GRIPPER_ENGAGE_ANGLE, "S1"),
+                     (module.GRIPPER_LIFT_ANGLE, "S1")]
+
+
+def test_lift_holds_the_piece_between_grab_and_release(client):
+    """Levantar no es soltar: el angulo de transporte queda entre los otros dos."""
+    module, _ = client
+    assert (module.GRIPPER_ENGAGE_ANGLE, module.GRIPPER_LIFT_ANGLE,
+            module.GRIPPER_RELEASE_ANGLE) == (0, 250, 300)
+    assert (module.GRIPPER_ENGAGE_ANGLE < module.GRIPPER_LIFT_ANGLE
+            < module.GRIPPER_RELEASE_ANGLE)
+
+
+def test_release_goes_straight_to_the_release_angle(client):
+    module, hardware = client
+    moves = _record_servo(hardware)
+    assert module.handle("GRIPPER 0") == "ACK GRIPPER"
+    assert moves == [(module.GRIPPER_RELEASE_ANGLE, "S1")]
+
+
+def test_lift_can_be_disabled(client):
+    module, hardware = client
+    moves = _record_servo(hardware)
+    module.GRIPPER_LIFT_ANGLE = None
+    module.handle("GRIPPER 1")
+    assert moves == [(module.GRIPPER_ENGAGE_ANGLE, "S1")]
+
+
+# --------------------------------------------------------------------------- #
+# Precision: entrada unidireccional y repaso fino
+# --------------------------------------------------------------------------- #
+
+@pytest.mark.parametrize("start", [0.0, 60.0])
+def test_final_approach_always_comes_from_the_same_side(client, start):
+    """El juego de la reductora no lo ve el encoder: hay que llegar siempre igual.
+
+    Grabando con --jog se llega con pasos pequenos y jugando con giros largos
+    desde cualquier casilla; solo si el ultimo tramo va siempre en el mismo
+    sentido coinciden las dos cosas.
+    """
+    module, hardware = client
+    assert module.BACKLASH_DEG > 0
+    hardware.angles["EM1"] = start
+    module.handle("MOVE 30 0")
+    shoulder_turns = [t[0] for t in hardware.turns if t[2] == "EM1"]
+    assert shoulder_turns[-1] * module.APPROACH_SIGN > 0
+    assert hardware.angles["EM1"] == 30.0
+
+
+def test_approach_from_the_wrong_side_survives_a_short_turn(client):
+    """Si el giro de "pasarse" se queda corto, se insiste: si no, el eje
+    seguiria del lado malo y la compensacion no serviria de nada."""
+    module, hardware = client
+    hardware.angles["EM1"] = 60.0
+    hardware.fraction = 0.5
+    hardware.stall_rpm = module.MOVE_SPEED_RPM + module.MOVE_SPEED_STEP_RPM
+    module.handle("MOVE 30 0")
+    shoulder_turns = [t[0] for t in hardware.turns if t[2] == "EM1"]
+    assert shoulder_turns[-1] > 0
+    assert hardware.angles["EM1"] == 30.0
+
+
+def test_small_sag_is_corrected_too(client):
+    """Ceder 1.5 grados antes se daba por bueno: justo "un par de grados"."""
+    module, hardware = client
+    hardware.angles["EM2"] = -30.0
+
+    def change_load(port):
+        if port == "EM2":
+            hardware.angles["EM1"] -= 1.5
+
+    hardware.after_turn = change_load
+    # Codo de -30 a -20: en positivo, un solo giro y sin compensacion.
+    assert module.handle("MOVE 30 -20") == "ACK MOVE 30.0 -20.0"

@@ -8,6 +8,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from magnus import config
 from magnus.app.controller import MagnusController
 from magnus.app.arm_bridge import ArmSupervisor
 from magnus.app.session import SyntheticCamera
@@ -109,13 +110,17 @@ def test_calibrated_arm_executes_once_and_waits_for_camera():
         table = PositionsTable.load(path)
         source = table.get(planned.from_square).position
         dest = table.get(planned.to_square).position
-        assert backend.commands == [
+        expected = [
             ("connect",), ("home",), ("gripper", False),
             ("move_to", source.shoulder, source.elbow), ("gripper", True),
             ("move_to", dest.shoulder, dest.elbow), ("gripper", False),
         ]
+        if table.has(config.ZONE_PARK):     # la tabla real ya trae el reposo
+            park = table.get(config.ZONE_PARK).position
+            expected.append(("move_to", park.shoulder, park.elbow))
+        assert backend.commands == expected
         _run(ctrl, 30)
-        assert len(backend.commands) == 7
+        assert len(backend.commands) == len(expected)
         assert ctrl.session.history_san == []
         ctrl.voice.say_your_turn.assert_not_called()
         assert camera.push(planned.uci)  # El usuario mueve la pieza tras el recorrido.

@@ -242,7 +242,7 @@ def main():
             arm.move_to(shoulder=0.0, elbow=0.0)
 
         # 5. Garra, para cerrar la prueba completa.
-        paso("Probar la garra (acercar y alejar el iman)")
+        paso("Probar la garra (agarrar, levantar y soltar)")
         arm.set_gripper(True)
         time.sleep(1.0)
         arm.set_gripper(False)

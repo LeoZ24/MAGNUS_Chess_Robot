@@ -73,8 +73,14 @@ código: `positions.json` se graba directamente en grados de motor.
   cliente (así no hace falta descubrir la IP de la placa). El protocolo son
   líneas de texto: `PING` / `HOME` / `LIMITS` / `ZERO` / `MOVE` / `GRIPPER` /
   `GET` / `STOP`, cada una con su `ACK` o un `ERR <mensaje>`.
-- **Garra: CONFIRMADA.** El servo acerca el imán N52 a la pieza para agarrarla
-  y lo aleja para soltarla. No es una pinza mecánica ni el eje vertical.
+- **Garra: CONFIRMADA, con TRES posiciones del servo** (medidas en el brazo
+  real, en el cliente): `GRIPPER_ENGAGE_ANGLE = 0` baja el imán N52 sobre la
+  pieza y la agarra; `GRIPPER_LIFT_ANGLE = 250` la **levanta sin soltarla**;
+  `GRIPPER_RELEASE_ANGLE = 300` la suelta. `GRIPPER 1` hace agarrar + levantar
+  seguido y solo responde `ACK` con la pieza ya arriba. ⚠️ Sin el paso de
+  levantar, el brazo arrastraba la pieza por el tablero y se llevaba por delante
+  a las vecinas. No es una pinza mecánica: hombro y codo no dan altura, la da
+  este servo.
 - **Imán de agarre:** N52, 12×3 mm — muy fuerte. Su radio de influencia puede
   desplazar piezas en casillas adyacentes si el brazo pasa muy cerca del
   tablero en movimientos laterales. Por eso la tabla de posiciones debería
@@ -202,6 +208,11 @@ que la punta cae en la casilla; lo que se guarda es la **orden**, no la medida,
 con la flexión ya dentro. Es la misma orden que se mandará jugando.
 
 - **`Enter` graba**; `s` salta; `q` sale (y pregunta antes de tirar el ajuste).
+- `h=85` fija un valor exacto; `h+2 c-1` ajusta los dos ejes en una línea.
+- `p` **prueba a recoger la pieza** (agarra y levanta, Enter la suelta): es la
+  prueba de verdad de que el imán cae centrado.
+- `v` lleva el brazo a la orden **desde lejos y por los dos lados**, como
+  llega jugando. Si la punta no cae igual las dos veces, sube `BACKLASH_DEG`.
 - Si un ajuste se sale de límites se vuelve a la **última orden aceptada**, no
   a la lectura del encoder: la diferencia entre las dos ES la flexión que este
   modo existe para capturar.
@@ -235,8 +246,9 @@ ve mejor y el codo sigue recogido durante el giro, así que barre menos tablero.
 Al terminar **relee los dos encoders**, porque al desplegar el codo el hombro
 sostiene más brazo y puede ceder después de darlo por bueno:
 
-- Si cedió poco (`MOVE_SAG_DEG`), se corrige y la jugada sigue. Abortar por eso
-  dejaría la pieza a medio camino, que es peor.
+- Si cedió más de `MOVE_SAG_DEG` (1°; con 2° se daban por buenos justo los
+  "un par de grados" que faltaban), se corrige y la jugada sigue, hasta
+  `MOVE_SAG_PASSES` rondas. Abortar por eso dejaría la pieza a medio camino.
 - Si no se deja corregir, `ERR ... no mantuvo ...`: la retención no está
   haciendo su trabajo y hay que decirlo, no mover el brazo a ciegas.
 
@@ -483,8 +495,11 @@ Pendiente (bloqueado por hardware):
   `ELBOW_TRAVEL_DEG` (ahora son 300° provisionales, generosos de más)
 - Grabar `positions.json` real calibrando el brazo **desde el cero
   referenciado** (`examples/generate_positions_template.py` genera la plantilla)
-- Ajustar `BACKLASH_DEG` si el brazo no repite al llegar a un ángulo desde un
-  lado o desde el otro
+- Comprobar `BACKLASH_DEG` (3° por defecto) con la tecla `v` del modo `--jog`.
+  Está **activado** porque la reductora interna del motor encoder tiene juego
+  que el encoder no ve: el último tramo entra siempre en el mismo sentido
+  (`APPROACH_SIGN`), así la tabla grabada con pasos pequeños y la partida con
+  giros largos llegan igual. Debe ser mayor que el juego real
 
 ---
 

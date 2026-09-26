@@ -15,8 +15,10 @@ El ``move(park)`` final retira el brazo fuera del tablero: si se queda donde
 terminó la jugada, le estorba al rival y le tapa el tablero a la cámara.  Solo
 se añade si ``park`` está grabado en la tabla (es opcional).
 
-Hombro y codo no suben ni bajan: hay una sola posición por casilla.
-S1 recoge y suelta la pieza. Cada jugada empieza devolviendo S1 a reposo.
+Hombro y codo no suben ni bajan: hay una sola posición por casilla. La
+altura la pone S1, que tiene tres posiciones: ``grip_on`` baja el imán, agarra
+la pieza y la LEVANTA (así no se arrastra por el tablero llevándose a las
+vecinas); ``grip_off`` la suelta. Cada jugada empieza devolviendo S1 a reposo.
 
 Los casos especiales encadenan varios pick & place, usando los metadatos de la
 ``MoveResponse`` (el brazo NO re-calcula nada de ajedrez):
