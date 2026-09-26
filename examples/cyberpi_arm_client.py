@@ -252,7 +252,15 @@ VERBOSE = True
 
 # =============================================================
 # Nombres de API del shield mBot2: verificar en el autocompletado de mBlock
-# que coincidan. Si alguno difiere, ajustar SOLO estas funciones _hw_*.
+# que coincidan. Si alguno difiere, ajustar SOLO estas funciones _hw_*
+# (y la llamada a EM_turn de _drive_turns, ver abajo).
+#
+# ⚠️ PILA DE LLAMADAS: el programa subido corre con MUY poca pila. Cada funcion
+# que llama a otra gasta un poco, y las EM_* de la placa gastan bastante por
+# dentro. Una sola funcion de mas en el camino de un MOVE bastaba para
+# "ERR maximum recursion depth exceeded" ANTES de mover nada. No anadas
+# funciones intermedias entre handle() y las EM_*: el test
+# test_move_does_not_nest_deeper_than_the_board_allows lo vigila.
 # =============================================================
 
 def _hw_get_angle(port):
@@ -374,7 +382,11 @@ def _drive_turns(target, port, current, name):
         delta = target - current
         if abs(delta) <= TOLERANCE_DEG or _out_of_time():
             break
-        _hw_turn(delta, speed, port)
+        # EM_turn directo y no via _hw_turn: es el punto MAS PROFUNDO de un
+        # MOVE (EM_turn anida bastante por dentro) y cada funcion de menos es
+        # margen de pila. Ver PILA DE LLAMADAS arriba.
+        _hw_hold(HOLD_ENABLED, port)
+        cyberpi.mbot2.EM_turn(delta, speed, port)   # RELATIVO, bloquea
         time.sleep(MOVE_SETTLE_S)
         previous = current
         current = _hw_get_angle(port)
@@ -527,15 +539,10 @@ def _move_all(shoulder, elbow):
     _clamp(shoulder, SHOULDER_LIM, "hombro")
     _clamp(elbow, ELBOW_LIM, "codo")
     _hw_hold(HOLD_ENABLED, "all")
+    # El limite se QUITA en handle(), no aqui con un try/finally envolviendo
+    # otra funcion: esa funcion de mas fue la que desbordo la pila (ver
+    # PILA DE LLAMADAS arriba).
     _deadline = time.time() + MOVE_BUDGET_S
-    try:
-        return _move_all_timed(shoulder, elbow)
-    finally:
-        _deadline = 0.0
-
-
-def _move_all_timed(shoulder, elbow):
-    """El cuerpo de _move_all, ya dentro del presupuesto de tiempo."""
 
     shoulder_axis = (shoulder, SHOULDER_PORT, SHOULDER_LIM, "hombro")
     elbow_axis = (elbow, ELBOW_PORT, ELBOW_LIM, "codo")
@@ -698,7 +705,11 @@ def handle(line):
             return "ERR MOVE requiere 2 argumentos"
         sh = float(parts[1])
         el = float(parts[2])
-        got_sh, got_el = _move_all(sh, el)
+        global _deadline
+        try:
+            got_sh, got_el = _move_all(sh, el)
+        finally:
+            _deadline = 0.0         # fuera de un MOVE no hay limite de tiempo
         return "ACK MOVE " + str(got_sh) + " " + str(got_el)
 
     if cmd == "GRIPPER":

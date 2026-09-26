@@ -720,9 +720,44 @@
       document.addEventListener("mousemove", wake); wake();
       document.addEventListener("click", () => { if (!document.fullscreenElement) document.documentElement.requestFullscreen?.(); }, { once: true });
     }
-    // El stream MJPEG se recupera solo si el servidor se reinicia.
-    $("camera").onerror = () => setTimeout(() => { $("camera").src = "/stream/camera.mjpg?" + Date.now(); }, 1500);
+    startCameraFeed();
     setInterval(tickClock, 500);
+  }
+
+  // Cámara fotograma a fotograma (no MJPEG). Con el MJPEG la imagen se
+  // quedaba a veces en NEGRO aunque la visión funcionara: un stream atascado,
+  // o en cola por el límite de conexiones del navegador (cada pestaña tiene
+  // además el SSE abierto), no da ningún error, así que nunca se reintentaba.
+  // Aquí cada fotograma es una petición corta: si una no llega en
+  // CAMERA_STALL_MS se corta y se pide otra.
+  const CAMERA_STALL_MS = 4000;
+  function startCameraFeed() {
+    const img = $("camera");
+    let seq = -1;
+    let shownUrl = null;
+    const next = (delay) => setTimeout(pull, delay);
+    const pull = () => {
+      if (document.hidden) { next(500); return; }   // pestaña oculta: no gastar
+      const ctrl = new AbortController();
+      const stall = setTimeout(() => ctrl.abort(), CAMERA_STALL_MS);
+      fetch(`/stream/camera.jpg?after=${seq}`, { cache: "no-store", signal: ctrl.signal })
+        .then((res) => {
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          seq = parseInt(res.headers.get("X-Frame-Seq") || "-1", 10);
+          return res.blob();
+        })
+        .then((blob) => {
+          const url = URL.createObjectURL(blob);
+          const previous = shownUrl;
+          img.onload = () => { if (previous) URL.revokeObjectURL(previous); };
+          img.src = url;
+          shownUrl = url;
+          next(0);                     // el servidor ya espera al siguiente
+        })
+        .catch(() => { seq = -1; next(1000); })
+        .finally(() => clearTimeout(stall));
+    };
+    pull();
   }
 
   buildBoard();

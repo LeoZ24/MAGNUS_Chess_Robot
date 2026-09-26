@@ -603,3 +603,58 @@ def test_gripper_angles_fit_the_servo_range(client):
     for angle in (module.GRIPPER_ENGAGE_ANGLE, module.GRIPPER_LIFT_ANGLE,
                   module.GRIPPER_RELEASE_ANGLE):
         assert 0 <= angle <= 180
+
+
+# --------------------------------------------------------------------------- #
+# Pila de llamadas: la CyberPi tiene muy poca
+# --------------------------------------------------------------------------- #
+
+def _depth_below_handle():
+    """Funciones entre handle() y quien llama a esta (sin contarla)."""
+    frame = sys._getframe(2)            # 0: esta, 1: el espia, 2: el cliente
+    depth = 1
+    while frame is not None and frame.f_code.co_name != "handle":
+        frame = frame.f_back
+        depth += 1
+    assert frame is not None, "no se llamo desde handle()"
+    return depth
+
+
+def test_move_does_not_nest_deeper_than_the_board_allows(client):
+    """En la placa, UNA funcion de mas entre handle() y EM_turn bastaba para
+    "ERR maximum recursion depth exceeded" antes de mover nada.
+
+    Profundidades medidas en el cliente que SI funcionaba en el brazo real
+    (EM_turn quinta por debajo de handle) menos una de margen para EM_turn,
+    que es la que anida por dentro. El resto, como estaban.
+    """
+    module, hardware = client
+    deepest = {}
+
+    def spy(name):
+        real = getattr(hardware, name)
+
+        def wrapper(*args):
+            deepest[name] = max(deepest.get(name, 0), _depth_below_handle())
+            return real(*args)
+        setattr(hardware, name, wrapper)
+
+    for name in ("EM_turn", "EM_set_power", "EM_stop", "EM_lock", "EM_get_angle"):
+        spy(name)
+
+    # Un MOVE que pasa por todo: compensacion de juego, impulsos y repaso.
+    hardware.angles["EM1"] = 60.0
+    hardware.fraction = 0.5
+    hardware.power_gain = 2.0
+
+    def change_load(port):
+        if port == "EM2":
+            hardware.angles["EM1"] += 3.0
+
+    hardware.after_turn = change_load
+    module.handle("MOVE 30 -20")
+
+    assert set(deepest) == {"EM_turn", "EM_set_power", "EM_stop", "EM_lock",
+                            "EM_get_angle"}
+    assert deepest["EM_turn"] <= 4
+    assert max(deepest.values()) <= 6

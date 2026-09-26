@@ -7,6 +7,9 @@ Rutas:
     GET  /api/state             el snapshot del controlador (JSON)
     GET  /api/events            el mismo snapshot en streaming (Server-Sent
                                 Events): se envía cada vez que cambia
+    GET  /stream/camera.jpg     un fotograma; con ``?after=<n>`` espera (hasta
+                                ~1 s) a uno más nuevo que el ``n`` dado. Es
+                                lo que usa la interfaz (ver ``app.js``)
     GET  /stream/camera.mjpg    la cámara con overlays (multipart MJPEG)
     POST /api/command           ``{"name": "...", "params": {...}}``
 
@@ -26,7 +29,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Optional
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from .controller import MagnusController
 
@@ -38,6 +41,9 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 SSE_MIN_INTERVAL_S = 1.0 / 12.0
 SSE_KEEPALIVE_S = 1.0
 MJPEG_BOUNDARY = "magnusframe"
+# Espera máxima de /stream/camera.jpg?after=n por un fotograma nuevo. Si la
+# cámara se para, se devuelve el último y la interfaz vuelve a preguntar.
+FRAME_WAIT_S = 1.0
 MAX_BODY_BYTES = 64 * 1024
 
 
@@ -74,7 +80,8 @@ class _Handler(BaseHTTPRequestHandler):
 
     # -- GET ------------------------------------------------------------ #
     def do_GET(self) -> None:  # noqa: N802 (nombre fijado por BaseHTTPRequestHandler)
-        path = urlsplit(self.path).path
+        url = urlsplit(self.path)
+        path = url.path
         try:
             if path in ("/", "/index.html"):
                 self._serve_static("index.html")
@@ -87,15 +94,40 @@ class _Handler(BaseHTTPRequestHandler):
             elif path == "/stream/camera.mjpg":
                 self._serve_mjpeg()
             elif path == "/stream/camera.jpg":
-                jpeg, _ = self.server.controller.latest_jpeg()
-                if jpeg is None:
-                    self._not_found()
-                else:
-                    self._send_bytes(jpeg, "image/jpeg")
+                self._serve_frame(parse_qs(url.query).get("after", [None])[0])
             else:
                 self._not_found()
         except (BrokenPipeError, ConnectionResetError):
             pass    # el navegador cerró la pestaña: normal en los streams
+
+    def _serve_frame(self, after: Optional[str]) -> None:
+        """Un fotograma. Con ``after`` espera a uno más nuevo (long-poll).
+
+        La interfaz pide así la cámara, fotograma a fotograma, en vez de con el
+        MJPEG: un stream MJPEG que se atasca, o que el navegador deja en cola
+        por el límite de conexiones por servidor (cada pestaña ya tiene el SSE
+        abierto), deja la imagen en NEGRO sin dar ningún error. Una petición
+        corta que no llega se puede cortar y repetir.
+        """
+        controller = self.server.controller
+        try:
+            after_seq = int(after) if after is not None else None
+        except ValueError:
+            after_seq = None
+        if after_seq is None:
+            jpeg, seq = controller.latest_jpeg()
+        else:
+            jpeg, seq = controller.wait_for_jpeg(after_seq, timeout=FRAME_WAIT_S)
+        if jpeg is None:
+            self._not_found()
+            return
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "image/jpeg")
+        self.send_header("Content-Length", str(len(jpeg)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Frame-Seq", str(seq))
+        self.end_headers()
+        self.wfile.write(jpeg)
 
     def _serve_static(self, name: str) -> None:
         target = (STATIC_DIR / name).resolve()

@@ -450,7 +450,13 @@ HTTP de la librería estándar + HTML/CSS/JS sin frameworks).
   `snapshot()` JSON con TODO el estado. `step()` es una iteración, testeable
   sin hilos ni servidor
 - `server.py` — rutas: `/` (página), `/api/state`, `/api/events` (SSE),
-  `/api/command` (POST), `/stream/camera.mjpg`
+  `/api/command` (POST), `/stream/camera.jpg?after=<n>` (un fotograma, espera
+  a uno más nuevo que `n`) y `/stream/camera.mjpg`
+- ⚠️ La interfaz pide la cámara **fotograma a fotograma**, no con el MJPEG: un
+  stream MJPEG atascado o en cola (límite de conexiones del navegador, con el
+  SSE ya abierto y varias pestañas) dejaba la imagen **en negro sin error** y
+  nunca se reintentaba. `startCameraFeed()` en `app.js` corta y repite la
+  petición que no llega
 - `static/` — la interfaz. El tablero se dibuja en el navegador (SVG + piezas
   animadas por diff de placement); la cámara llega como MJPEG
 
@@ -488,6 +494,13 @@ El cliente que corre en la placa está versionado en
 `examples/cyberpi_arm_client.py` (no se importa desde ahí: se sube a la
 CyberPi con mBlock en modo UPLOAD). Si lo editas en mBlock, copia el resultado
 de vuelta al repositorio.
+
+⚠️ **La placa tiene MUY poca pila.** Una sola función intermedia de más entre
+`handle()` y las `EM_*` bastó para `ERR maximum recursion depth exceeded`
+antes de mover nada. No envuelvas funciones del camino de un `MOVE` en otras
+(ni para un `try/finally`): `test_move_does_not_nest_deeper_than_the_board_allows`
+mide la profundidad y falla si crece. Por eso `_drive_turns` llama a `EM_turn`
+directamente, sin pasar por `_hw_turn`.
 
 **Si la subida desde mBlock se queda colgada en 1 %**, no es el código: esa
 fase ya pasó ("processing code completed"). Es que algo más tiene tomado el
