@@ -106,7 +106,8 @@ MOVE_BUDGET_S       = 15.0
 # largo, baja CREEP_AIM o CREEP_PULSE_MIN_S.
 CREEP_POWER         = 18      # % de potencia del primer impulso
 CREEP_POWER_STEP    = 6       # subida cuando un impulso no mueve el eje
-CREEP_POWER_MAX     = 40      # techo: por encima no es falta de par
+CREEP_POWER_MAX     = 55      # techo de potencia de los impulsos (40 no
+                              # devolvia el hombro con el brazo desplegado)
 CREEP_POWER_MIN     = 10      # suelo: por debajo el motor ya no mueve nada
 CREEP_AIM           = 0.6     # a que fraccion de lo que falta apunta el impulso
 CREEP_PULSE_MIN_S   = 0.05    # impulso mas corto (y el que mide el ritmo)
@@ -166,7 +167,7 @@ ASSIST_SIGN    = 1        # +1 o -1: sentido en el que AYUDA al hombro (ver arri
 # Juego de la transmision (backlash). La reductora INTERNA del motor encoder
 # tiene holgura, y el encoder no la ve: el mismo angulo de encoder deja la punta
 # en dos sitios segun se llegue desde un lado o desde el otro. Con esto activo,
-# el ultimo tramo entra SIEMPRE en el mismo sentido (APPROACH_SIGN): si el eje
+# el ultimo tramo entra SIEMPRE en el mismo sentido (*_APPROACH_SIGN): si el eje
 # viene del lado contrario, primero se pasa BACKLASH_DEG y luego vuelve.
 #
 # Importa el doble porque la tabla se graba con pasos pequenos (--jog) y se
@@ -177,7 +178,16 @@ ASSIST_SIGN    = 1        # +1 o -1: sentido en el que AYUDA al hombro (ver arri
 # `record_arm_positions.py --jog` lleva el brazo a la misma orden desde los dos
 # lados. 0 = desactivado.
 BACKLASH_DEG  = 3.0
-APPROACH_SIGN = 1             # +1 = el tramo final siempre va en positivo
+# Sentido del ultimo tramo, POR EJE: el mismo en que empuja la carga.
+#
+# En el brazo real el hombro se va SOLO hacia atras (59 -> 52, 52 -> 47) sin que
+# nada mas se mueva: hay una carga fija que lo empuja hacia negativo. Si llega
+# empujando CONTRA esa carga (subiendo), al parar el motor la holgura de la
+# reductora cede hacia el lado de la carga y el eje cae. Si llega A FAVOR
+# (bajando), los engranajes ya estan apoyados del lado de la carga y no hay
+# holgura que ceder. Por eso el hombro entra desde arriba (-1).
+SHOULDER_APPROACH_SIGN = -1   # el hombro entra BAJANDO (a favor de su carga)
+ELBOW_APPROACH_SIGN    = 1    # el codo entra subiendo
 
 # --- Limites de seguridad (grados de MOTOR) ---
 # ⚠️ REGLA QUE CUESTA UN BRAZO SI SE OLVIDA: al referenciar, el cero queda EN
@@ -232,8 +242,8 @@ ELBOW_LIM    = _limits_from_home(HOME_ELBOW_SIGN, ELBOW_TRAVEL_DEG)
 # pone el servo, asi que el servo tiene TRES posiciones, no dos:
 #
 #   ENGAGE  (0)    iman abajo, sobre la pieza: la agarra
-#   LIFT    (125)  iman arriba CON la pieza: la levanta sin soltarla
-#   RELEASE (160)  iman del todo arriba: la pieza se desprende
+#   LIFT    (110)  iman arriba CON la pieza: la levanta sin soltarla
+#   RELEASE (170)  iman del todo arriba: la pieza se desprende
 #
 # ⚠️ servo_set solo acepta de 0 a 180: un angulo mayor se recorta a 180.
 #
@@ -245,8 +255,8 @@ ELBOW_LIM    = _limits_from_home(HOME_ELBOW_SIGN, ELBOW_TRAVEL_DEG)
 # Si al subir, la pieza se SUELTA, LIFT esta demasiado cerca de RELEASE: bajalo.
 # Si la pieza sigue rozando el tablero, subelo. None = no levantar (antiguo).
 GRIPPER_ENGAGE_ANGLE  = 0     # iman CERCA de la pieza (la agarra)
-GRIPPER_LIFT_ANGLE    = 125   # pieza agarrada y levantada (para transportarla)
-GRIPPER_RELEASE_ANGLE = 160   # iman LEJOS de la pieza (la suelta)
+GRIPPER_LIFT_ANGLE    = 110   # pieza agarrada y levantada (para transportarla)
+GRIPPER_RELEASE_ANGLE = 170   # iman LEJOS de la pieza (la suelta)
 GRIPPER_SETTLE_S      = 1     # tiempo para que el servo llegue
 GRIPPER_GRAB_S        = 0.3   # abajo, antes de levantar: que el iman "pegue"
 
@@ -460,9 +470,14 @@ def _creep_to(target, port, name):
             else:
                 pulse = CREEP_PULSE_MIN_S
 
+            _hw_hold(False, port)       # no empujar contra la retencion...
             _hw_set_power(power * sign, port)
             time.sleep(pulse)
             _hw_stop_axis(port)
+            # ...pero SI sostener durante la pausa. Sin esto, un eje con carga
+            # (el hombro) perdia en cada pausa lo que ganaba en el impulso, y
+            # el repaso nunca lo devolvia a su sitio.
+            _hw_hold(HOLD_ENABLED, port)
             time.sleep(CREEP_REST_S)
 
             previous = current
@@ -505,9 +520,11 @@ def _move_axis(target, port, lim, name, approach=True):
     # poco para que el tramo final entre siempre en el mismo sentido. Con
     # _drive_turns y no con un solo giro: si el giro se queda corto, el eje
     # seguiria del lado malo y la compensacion no serviria de nada.
+    approach_sign = (SHOULDER_APPROACH_SIGN if port == SHOULDER_PORT
+                     else ELBOW_APPROACH_SIGN)
     if (approach and BACKLASH_DEG > 0
-            and (target - start) * APPROACH_SIGN < -TOLERANCE_DEG):
-        pre = max(lim[0], min(lim[1], target - APPROACH_SIGN * BACKLASH_DEG))
+            and (target - start) * approach_sign < -TOLERANCE_DEG):
+        pre = max(lim[0], min(lim[1], target - approach_sign * BACKLASH_DEG))
         _drive_turns(pre, port, start, name)
 
     current = _hw_get_angle(port)

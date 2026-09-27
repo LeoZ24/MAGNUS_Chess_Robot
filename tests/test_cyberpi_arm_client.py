@@ -146,6 +146,10 @@ def client(monkeypatch):
     # (test_default_order_moves_the_shoulder_last y siguientes).
     module.DEFAULT_SHOULDER_FIRST = module.MOVE_SHOULDER_FIRST
     module.MOVE_SHOULDER_FIRST = True
+    # Igual con el sentido de entrada: esos tests suponen que el hombro entra
+    # subiendo. El sentido real (bajando) se prueba aparte.
+    module.DEFAULT_SHOULDER_APPROACH_SIGN = module.SHOULDER_APPROACH_SIGN
+    module.SHOULDER_APPROACH_SIGN = 1
     return module, hardware
 
 
@@ -480,7 +484,7 @@ def test_lift_holds_the_piece_between_grab_and_release(client):
     """Levantar no es soltar: el angulo de transporte queda entre los otros dos."""
     module, _ = client
     assert (module.GRIPPER_ENGAGE_ANGLE, module.GRIPPER_LIFT_ANGLE,
-            module.GRIPPER_RELEASE_ANGLE) == (0, 125, 160)
+            module.GRIPPER_RELEASE_ANGLE) == (0, 110, 170)
     assert (module.GRIPPER_ENGAGE_ANGLE < module.GRIPPER_LIFT_ANGLE
             < module.GRIPPER_RELEASE_ANGLE)
 
@@ -517,7 +521,7 @@ def test_final_approach_always_comes_from_the_same_side(client, start):
     hardware.angles["EM1"] = start
     module.handle("MOVE 30 0")
     shoulder_turns = [t[0] for t in hardware.turns if t[2] == "EM1"]
-    assert shoulder_turns[-1] * module.APPROACH_SIGN > 0
+    assert shoulder_turns[-1] * module.SHOULDER_APPROACH_SIGN > 0
     assert hardware.angles["EM1"] == 30.0
 
 
@@ -718,3 +722,47 @@ def test_with_the_shoulder_last_the_elbow_cannot_undo_it(client):
 
     hardware.after_turn = change_load
     assert module.handle("MOVE 59 -215") == "ACK MOVE 59.0 -215.0"
+
+
+
+# --------------------------------------------------------------------------- #
+# El hombro se va solo hacia atras: entrar A FAVOR de la carga y sostener
+# --------------------------------------------------------------------------- #
+
+def test_shoulder_enters_going_down_by_default(client):
+    """En el brazo real el hombro cae solo hacia negativo (52 -> 47 sin que se
+    mueva nada mas): entra bajando, con la reductora ya apoyada en la carga."""
+    module, hardware = client
+    assert module.DEFAULT_SHOULDER_APPROACH_SIGN == -1
+    assert module.ELBOW_APPROACH_SIGN == 1
+    module.SHOULDER_APPROACH_SIGN = module.DEFAULT_SHOULDER_APPROACH_SIGN
+    for start in (0.0, 80.0):                 # desde abajo y desde arriba
+        hardware.angles["EM1"] = start
+        hardware.turns.clear()
+        module.handle("MOVE 52 0")
+        shoulder_turns = [t[0] for t in hardware.turns if t[2] == "EM1"]
+        assert shoulder_turns[-1] < 0
+        assert hardware.angles["EM1"] == 52.0
+
+
+def test_creep_holds_the_axis_between_pulses(client):
+    """Un eje con carga perdia en cada pausa lo que ganaba en cada impulso.
+
+    Shield simulado: sin retencion, el hombro vuelve a caer hasta 47 (donde lo
+    deja la carga) en cuanto se le suelta. Con la retencion puesta durante la
+    pausa, lo ganado en cada impulso se queda.
+    """
+    module, hardware = client
+    hardware.fraction = 0.0
+    hardware.power_gain = 1.0
+    hardware.angles["EM1"] = 47.0
+    real_read = hardware.EM_get_angle
+
+    def falls_when_free(port):
+        if port == "EM1" and not hardware.locked["EM1"]:
+            hardware.angles["EM1"] = 47.0
+        return real_read(port)
+
+    hardware.EM_get_angle = falls_when_free
+    reached = module._creep_to(52.0, "EM1", "hombro")
+    assert abs(reached - 52.0) <= module.TOLERANCE_DEG

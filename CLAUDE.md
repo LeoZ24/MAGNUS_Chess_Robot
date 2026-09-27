@@ -75,9 +75,11 @@ código: `positions.json` se graba directamente en grados de motor.
   `GET` / `STOP`, cada una con su `ACK` o un `ERR <mensaje>`.
 - **Garra: CONFIRMADA, con TRES posiciones del servo** (medidas en el brazo
   real, en el cliente): `GRIPPER_ENGAGE_ANGLE = 0` baja el imán N52 sobre la
-  pieza y la agarra; `GRIPPER_LIFT_ANGLE = 125` la **levanta sin soltarla**;
-  `GRIPPER_RELEASE_ANGLE = 160` la suelta. ⚠️ `servo_set` solo acepta 0–180
-  (más se recorta a 180). `GRIPPER 1` hace agarrar + levantar
+  pieza y la agarra; `GRIPPER_LIFT_ANGLE = 110` la **levanta sin soltarla**;
+  `GRIPPER_RELEASE_ANGLE = 170` la suelta. ⚠️ `servo_set` solo acepta 0–180
+  (más se recorta a 180), y **no hay forma de darle más fuerza al servo por
+  software**: `servo_set` solo fija el ángulo; el par depende del servo y de la
+  batería. `GRIPPER 1` hace agarrar + levantar
   seguido y solo responde `ACK` con la pieza ya arriba. ⚠️ Sin el paso de
   levantar, el brazo arrastraba la pieza por el tablero y se llevaba por delante
   a las vecinas. No es una pinza mecánica: hombro y codo no dan altura, la da
@@ -264,6 +266,20 @@ mueve el otro:
   si no `ERR`). El host espera `command_timeout` = 45 s, así que nunca corta él.
 - Si no se deja corregir, `ERR ... no mantuvo ...`: la retención no está
   haciendo su trabajo y hay que decirlo, no mover el brazo a ciegas.
+
+⚠️ **El hombro se va solo hacia negativo** (59→52, 52→47) aunque no se mueva
+nada más: hay una carga fija que lo empuja. Dos defensas en el cliente:
+
+- **Entra a su destino a favor de la carga** (`SHOULDER_APPROACH_SIGN = -1`,
+  bajando). Llegando contra la carga, al parar el motor la holgura de la
+  reductora cedía hacia la carga y el eje caía. El codo entra subiendo
+  (`ELBOW_APPROACH_SIGN = 1`).
+- **`_creep_to` retiene el eje en las pausas entre impulsos** (la suelta solo
+  mientras empuja). Sin eso, un eje cargado perdía en cada pausa lo que ganaba
+  en cada impulso y el repaso nunca lo devolvía.
+
+Si aun así cae: comprueba con los motores apagados si el brazo desplegado gira
+solo hacia ese lado (base inclinada, cable tirando, contrapeso).
 
 Los ángulos realmente alcanzados vuelven en `ACK MOVE <hombro> <codo>`, leídos
 al final de verdad y no antes de mover el otro eje.
@@ -524,7 +540,7 @@ Pendiente (bloqueado por hardware):
 - Comprobar `BACKLASH_DEG` (3° por defecto) con la tecla `v` del modo `--jog`.
   Está **activado** porque la reductora interna del motor encoder tiene juego
   que el encoder no ve: el último tramo entra siempre en el mismo sentido
-  (`APPROACH_SIGN`), así la tabla grabada con pasos pequeños y la partida con
+  (`SHOULDER_APPROACH_SIGN` / `ELBOW_APPROACH_SIGN`), así la tabla grabada con pasos pequeños y la partida con
   giros largos llegan igual. Debe ser mayor que el juego real
 
 ---
