@@ -242,10 +242,15 @@ los dos actuadores empujan en contra y se calientan sin mover el brazo.
 
 ### Orden de los ejes y verificación final
 
-`MOVE` mueve **primero el hombro y luego el codo** (`MOVE_SHOULDER_FIRST`): se
-ve mejor y el codo sigue recogido durante el giro, así que barre menos tablero.
-Al terminar **relee los dos encoders**, porque al desplegar el codo el hombro
-sostiene más brazo y puede ceder después de darlo por bueno:
+`MOVE` mueve **primero el codo y AL FINAL el hombro** (`MOVE_SHOULDER_FIRST =
+False`). Antes era al revés, pero en el brazo real el hombro no aguanta el giro
+del codo: llegaba a 59°, el codo giraba 215° y el hombro acababa en 52° sin
+poder volver (`ERR hombro no mantuvo`). El eje que peor se sostiene va el
+último: después de él no se mueve nada que lo desplace. (Con la pieza
+levantada, desplegar antes de girar ya no arrastra nada.)
+
+Al terminar **relee los dos encoders**, porque un eje puede ceder mientras se
+mueve el otro:
 
 - Si cedió más de `MOVE_SAG_DEG` (1.5°), se corrige y la jugada sigue, hasta
   `MOVE_SAG_PASSES` rondas. Abortar por eso dejaría la pieza a medio camino.

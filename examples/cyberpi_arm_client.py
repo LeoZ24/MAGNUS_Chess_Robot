@@ -124,10 +124,18 @@ CREEP_MAX_FLIPS     = 2       # veces que puede cruzar el objetivo antes de
 # STOP, un fallo o una desconexion liberan los motores: sostener el brazo.
 HOLD_ENABLED       = True
 
-# Orden de los ejes dentro de un MOVE. Con el hombro primero el brazo gira sobre
-# su base y despues se despliega: se ve mejor y el codo sigue recogido durante el
-# giro, asi que barre menos tablero.
-MOVE_SHOULDER_FIRST = True
+# Orden de los ejes dentro de un MOVE: el CODO primero y el HOMBRO al final.
+#
+# Antes era al reves (se veia mejor: el brazo giraba y luego se desplegaba),
+# pero en el brazo real el hombro NO aguanta el giro del codo: llegaba a 59,
+# el codo daba 215 grados, y el hombro acababa en 52 sin poder volver
+# ("ERR hombro no mantuvo"). Mover un eje empuja al otro (reaccion del motor y
+# carga del brazo desplegado), asi que el eje que peor se sostiene va el
+# ULTIMO: despues de el ya no se mueve nada que lo pueda desplazar.
+#
+# Con la pieza levantada (GRIPPER_LIFT_ANGLE) desplegar antes de girar ya no
+# arrastra nada por el tablero.
+MOVE_SHOULDER_FIRST = False
 
 # --- Ayuda del hombro con el geekservo (OPCIONAL, desactivada) ---
 # En el hombro hay un segundo actuador: un geekservo rojo que esta puesto para

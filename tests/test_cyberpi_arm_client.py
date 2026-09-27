@@ -139,6 +139,13 @@ def client(monkeypatch):
 
     hardware.EM_turn = timed_turn
     module.VERBOSE = False
+    # Muchos tests de abajo simulan "el primer eje cede al mover el segundo"
+    # y se escribieron con el hombro primero. El mecanismo (repaso, rechazo,
+    # limites de intentos) es el mismo en cualquier orden, asi que se fija
+    # ese orden aqui; el orden REAL por defecto se prueba aparte
+    # (test_default_order_moves_the_shoulder_last y siguientes).
+    module.DEFAULT_SHOULDER_FIRST = module.MOVE_SHOULDER_FIRST
+    module.MOVE_SHOULDER_FIRST = True
     return module, hardware
 
 
@@ -620,7 +627,8 @@ def _depth_below_handle():
     return depth
 
 
-def test_move_does_not_nest_deeper_than_the_board_allows(client):
+@pytest.mark.parametrize("shoulder_first", [True, False])
+def test_move_does_not_nest_deeper_than_the_board_allows(client, shoulder_first):
     """En la placa, UNA funcion de mas entre handle() y EM_turn bastaba para
     "ERR maximum recursion depth exceeded" antes de mover nada.
 
@@ -629,6 +637,7 @@ def test_move_does_not_nest_deeper_than_the_board_allows(client):
     que es la que anida por dentro. El resto, como estaban.
     """
     module, hardware = client
+    module.MOVE_SHOULDER_FIRST = shoulder_first
     deepest = {}
 
     def spy(name):
@@ -643,7 +652,8 @@ def test_move_does_not_nest_deeper_than_the_board_allows(client):
         spy(name)
 
     # Un MOVE que pasa por todo: compensacion de juego, impulsos y repaso.
-    hardware.angles["EM1"] = 60.0
+    hardware.angles["EM1"] = 60.0       # hombro del lado malo: compensacion
+    hardware.angles["EM2"] = -40.0      # codo del lado bueno: impulsos
     hardware.fraction = 0.5
     hardware.power_gain = 2.0
 
@@ -658,3 +668,53 @@ def test_move_does_not_nest_deeper_than_the_board_allows(client):
                             "EM_get_angle"}
     assert deepest["EM_turn"] <= 4
     assert max(deepest.values()) <= 6
+
+
+
+# --------------------------------------------------------------------------- #
+# Orden por defecto: el hombro, que es el que peor se sostiene, el ULTIMO
+# --------------------------------------------------------------------------- #
+
+def test_default_order_moves_the_shoulder_last(client):
+    module, hardware = client
+    assert module.DEFAULT_SHOULDER_FIRST is False
+    module.MOVE_SHOULDER_FIRST = module.DEFAULT_SHOULDER_FIRST
+    module.handle("MOVE 10 -10")
+    ports = [t[2] for t in hardware.turns]
+    assert ports[-1] == "EM1"
+    assert ports.index("EM2") < ports.index("EM1")
+
+
+def _elbow_drags_the_shoulder(hardware, module):
+    """El brazo real: al girar el codo, el hombro se va 7 grados atras y ya
+    no hay forma de devolverlo (a esa carga, ni giros ni impulsos lo mueven)."""
+    def change_load(port):
+        if port == "EM2":
+            hardware.angles["EM1"] -= 7.0
+            hardware.fraction = 0.0
+            hardware.power_gain = 0.0
+
+    hardware.after_turn = change_load
+
+
+def test_shoulder_that_cannot_resist_the_elbow_failed_with_the_old_order(client):
+    """Lo que paso en el tablero: 'hombro no mantuvo 59.0 (quedo en 52)'."""
+    module, hardware = client
+    _elbow_drags_the_shoulder(hardware, module)
+    module.MOVE_SHOULDER_FIRST = True
+    with pytest.raises(ValueError, match="hombro no mantuvo 59"):
+        module.handle("MOVE 59 -215")
+
+
+def test_with_the_shoulder_last_the_elbow_cannot_undo_it(client):
+    """El mismo brazo, con el orden nuevo: el codo empuja al hombro ANTES de
+    que el hombro se mueva, y despues ya no se mueve nada."""
+    module, hardware = client
+    module.MOVE_SHOULDER_FIRST = module.DEFAULT_SHOULDER_FIRST
+
+    def change_load(port):
+        if port == "EM2":
+            hardware.angles["EM1"] -= 7.0
+
+    hardware.after_turn = change_load
+    assert module.handle("MOVE 59 -215") == "ACK MOVE 59.0 -215.0"
