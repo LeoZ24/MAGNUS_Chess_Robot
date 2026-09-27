@@ -208,3 +208,38 @@ def test_hand_home_each_homes_and_releases_before_every_square_but_the_first():
     # Tras el HOME se sueltan los motores para poder colocarlo a mano.
     assert names[names.index("home") + 1] == "stop"
     assert set(captured) == {"e4", "e5"}
+
+
+class _SequenceBackend(FakeRecorderBackend):
+    """Devuelve lecturas de encoder en el orden indicado."""
+
+    def __init__(self, readings):
+        super().__init__()
+        self._readings = list(readings)
+
+    def get_position(self) -> tuple[float, float]:
+        self.commands.append(("get",))
+        return self._readings.pop(0)
+
+
+def test_hand_b_goes_back_and_overwrites_the_previous_square():
+    backend = _SequenceBackend([(9000.0, -9000.0), (9100.0, -9100.0),
+                                (9200.0, -9200.0)])
+    backend.connect()
+    captured = {}
+    # e4 se lee; en e5 se pulsa 'b', HOME + STOP, e4 se regraba; luego e5.
+    respuestas = ["", "", "b", "", "", "", "", "", ""]
+    with patch("builtins.input", side_effect=respuestas):
+        recorder._hand_capture(backend, ["e4", "e5"], LIMITS, captured,
+                               home_each=True)
+    assert captured == {"e4": {"shoulder": 9100.0, "elbow": -9100.0},
+                        "e5": {"shoulder": 9200.0, "elbow": -9200.0}}
+
+
+def test_hand_reading_at_home_asks_before_recording_it():
+    backend = _SequenceBackend([(0.5, -0.5), (9000.0, -9000.0)])
+    backend.connect()
+    captured = {}
+    with patch("builtins.input", side_effect=["", "", ""]):
+        recorder._hand_capture(backend, ["e4"], LIMITS, captured)
+    assert captured == {"e4": {"shoulder": 9000.0, "elbow": -9000.0}}

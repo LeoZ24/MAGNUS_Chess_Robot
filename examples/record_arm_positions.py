@@ -294,6 +294,23 @@ def _jog_capture(backend, squares, limits, seeds, captured,
                 print(f"   No te he entendido ({exc})." + JOG_HELP)
 
 
+# Una lectura a menos de esto del cero en los dos ejes es casi seguro un Enter
+# pulsado con el brazo aún en HOME, no una casilla: se pide confirmación.
+HOME_READING_DEG = 5.0
+
+
+class _GoBack(Exception):
+    """El usuario pidió repetir el destino anterior (``b``)."""
+
+
+def _ask(prompt: str) -> str:
+    """``input`` que convierte ``b`` en volver al destino anterior."""
+    answer = input(prompt).strip().lower()
+    if answer == "b":
+        raise _GoBack
+    return answer
+
+
 def _hand_capture(backend, squares, limits, captured,
                   home_each: bool = False) -> None:
     """Graba colocando el brazo a mano con los motores sueltos.
@@ -302,27 +319,54 @@ def _hand_capture(backend, squares, limits, captured,
     que acaba de referenciar ``main``): el cero se repone antes de cada lectura
     y un encoder que pierde cuentas al empujarlo a mano no contamina la
     siguiente casilla. Una lectura fuera de límites se descarta y se repite.
+
+    En cualquier pregunta, ``b`` vuelve al destino anterior y lo regraba
+    (sobrescribe su lectura): un Enter de más no obliga a empezar de nuevo.
     """
     print("Coloca a mano ambos ejes y mantenlos quietos al pulsar Enter.")
-    for index, square in enumerate(squares):
-        if home_each and index > 0:
-            input(f"\nSuelta el brazo y despeja su recorrido; Enter hace HOME "
-                  f"para {square}: ")
-            _rehome(backend)
-            input("HOME terminado. Sostén el brazo; Enter detiene los motores: ")
-            backend.stop()
-        while True:
-            input(f"\nColoca el brazo en {square} → Enter para leer: ")
-            shoulder, elbow = backend.get_position()
-            try:
-                _check_angles(shoulder, elbow, limits)
-            except ArmBackendError as exc:
-                print(f"   {exc} Vuelve a colocarlo.")
+    print("En cualquier momento: 'b' + Enter repite la casilla ANTERIOR.")
+    index = 0
+    # Tras volver atrás hay que referenciar aunque sea el primer destino: los
+    # motores están sueltos y el brazo, donde lo dejó la casilla siguiente.
+    force_home = False
+    while index < len(squares):
+        square = squares[index]
+        try:
+            if force_home or (home_each and index > 0):
+                _ask(f"\nSuelta el brazo y despeja su recorrido; Enter hace "
+                     f"HOME para {square}: ")
+                _rehome(backend)
+                force_home = False
+                _ask("HOME terminado. Sostén el brazo; Enter detiene los motores: ")
+                backend.stop()
+            while True:
+                _ask(f"\nColoca el brazo en {square} → Enter para leer: ")
+                shoulder, elbow = backend.get_position()
+                try:
+                    _check_angles(shoulder, elbow, limits)
+                except ArmBackendError as exc:
+                    print(f"   {exc} Vuelve a colocarlo.")
+                    continue
+                if (abs(shoulder) < HOME_READING_DEG
+                        and abs(elbow) < HOME_READING_DEG):
+                    answer = _ask(f"   Lectura casi en el cero ({shoulder:+.1f} "
+                                  f"{elbow:+.1f}): parece el brazo en HOME. "
+                                  f"'g' + Enter la graba igual, Enter repite: ")
+                    if answer != "g":
+                        continue
+                break
+        except _GoBack:
+            if index == 0:
+                print("   No hay casilla anterior.")
                 continue
-            break
+            index -= 1
+            force_home = home_each
+            print(f"   Volvemos a {squares[index]} (se sobrescribirá).")
+            continue
         angles = {"shoulder": round(shoulder, 2), "elbow": round(elbow, 2)}
         captured[square] = angles
         print(f'"{square}": {json.dumps(angles, allow_nan=False)}', flush=True)
+        index += 1
 
 
 def main() -> int:
