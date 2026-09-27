@@ -168,3 +168,29 @@ def test_jog_verify_comes_back_from_both_sides_like_in_a_game():
 def test_jog_verify_never_leaves_the_limits():
     assert recorder._away(5.0, -15.0, (0.0, 300.0)) == 0.0
     assert recorder._away(-5.0, 15.0, (-300.0, 0.0)) == 0.0
+
+
+def test_jog_home_each_rehomes_before_every_square_but_the_first():
+    backend = FakeRecorderBackend()
+    backend.connect()
+    captured = {}
+    seeds = {"e4": (9000.0, -9000.0), "e5": (9001.0, -9001.0)}
+    with patch("builtins.input", side_effect=["", ""]):
+        recorder._jog_capture(backend, ["e4", "e5"], LIMITS, seeds, captured,
+                              home_each=True)
+    names = [c[0] for c in backend.commands]
+    # main() ya referenció antes de e4: solo hay un HOME, entre e4 y e5.
+    assert names.count("home") == 1
+    assert names.index("home") > backend.commands.index(("move_to", 9000.0, -9000.0))
+    assert names.index("home") < backend.commands.index(("move_to", 9001.0, -9001.0))
+    assert set(captured) == {"e4", "e5"}
+
+
+def test_jog_r_rehomes_and_returns_to_the_same_order():
+    backend = FakeRecorderBackend()
+    backend.connect()
+    captured = _jog(backend, ["h+2", "r", ""])
+    names = [c[0] for c in backend.commands]
+    assert names.count("home") == 1
+    assert backend.commands[names.index("home") + 1] == ("move_to", 9002.0, -9000.0)
+    assert captured == {"e4": {"shoulder": 9002.0, "elbow": -9000.0}}

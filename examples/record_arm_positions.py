@@ -8,6 +8,7 @@ antes: solo un servidor puede ocupar el puerto del brazo.
     python3 examples/record_arm_positions.py e4
     python3 examples/record_arm_positions.py a1 a2 discard exchange
     python3 examples/record_arm_positions.py --all
+    python3 examples/record_arm_positions.py --all --jog --home-each
 
 Hay dos modos:
 
@@ -20,6 +21,7 @@ Hay dos modos:
          Parte de lo ya grabado, así que recalibrar es solo corregir.
          `p` prueba a recoger la pieza de verdad y `v` comprueba que la orden
          repite llegando desde lejos, como en la partida.
+         Con --home-each hace HOME antes de cada destino; `r` lo hace a mano.
 
   (por defecto) referencia con HOME, envía STOP y tú colocas el brazo a mano;
          se leen los dos encoders. Más rápido, menos fiel. Sostén el peso del
@@ -115,6 +117,8 @@ JOG_HELP = """
   p           PROBAR: recoger la pieza (agarra y levanta) y volver a soltarla
   v           VERIFICAR: alejarse por un lado y por el otro y volver, como
               en la partida; si la punta no cae igual, sube BACKLASH_DEG
+  r           REFERENCIAR: HOME y volver a la misma orden. Si la punta ya no
+              cae donde caía, el cero se había corrido (no era la tabla)
   Enter       grabar esta posición y pasar a la siguiente
   s           saltar esta posición sin grabarla
   q           terminar
@@ -191,7 +195,15 @@ def _try_pick(backend) -> None:
     backend.set_gripper(False)
 
 
-def _jog_capture(backend, squares, limits, seeds, captured) -> None:
+def _rehome(backend) -> None:
+    """HOME con el imán arriba, para no arrastrar piezas al buscar los topes."""
+    print("   Referenciando (HOME)...", flush=True)
+    backend.set_gripper(False)
+    backend.home()
+
+
+def _jog_capture(backend, squares, limits, seeds, captured,
+                 home_each: bool = False) -> None:
     """Graba llevando el brazo con los motores, no colocándolo a mano.
 
     POR QUÉ IMPORTA: colocado a mano, con los motores sueltos, el brazo no
@@ -203,12 +215,18 @@ def _jog_capture(backend, squares, limits, seeds, captured) -> None:
 
     Grabando así, lo que se guarda es la ORDEN que deja la punta en la casilla,
     con la flexión ya dentro. Es la misma orden que se mandará jugando.
+
+    Con ``home_each`` se referencia antes de cada destino (menos el primero,
+    que acaba de referenciar ``main``): así cada orden se mide desde un cero
+    recién puesto y un error de encoder no se arrastra de casilla en casilla.
     """
     print("\nModo JOG: el brazo se mueve solo; no lo empujes con la mano.")
     print(JOG_HELP)
     # Imán arriba, como cuando el brazo llega a una casilla jugando.
     backend.set_gripper(False)
-    for square in squares:
+    for index, square in enumerate(squares):
+        if home_each and index > 0:
+            _rehome(backend)
         target = seeds.get(square)
         if target is None:
             target = backend.get_position()
@@ -257,10 +275,13 @@ def _jog_capture(backend, squares, limits, seeds, captured) -> None:
                         print(f'   grabada {square}: '
                               f'{json.dumps(angles, allow_nan=False)}', flush=True)
                 raise KeyboardInterrupt
-            if orden in ("p", "v"):
+            if orden in ("p", "v", "r"):
                 try:
                     if orden == "p":
                         _try_pick(backend)
+                    elif orden == "r":
+                        # El bucle vuelve a mandar la misma orden al continuar.
+                        _rehome(backend)
                     else:
                         _verify(backend, shoulder, elbow, limits)
                 except ArmBackendError as exc:
@@ -287,6 +308,9 @@ def main() -> int:
     parser.add_argument("--jog", action="store_true",
                         help="Grabar MOVIENDO el brazo con los motores en vez "
                              "de colocarlo a mano (recomendado, ver abajo)")
+    parser.add_argument("--home-each", action="store_true",
+                        help="Con --jog: hacer HOME antes de cada destino, para "
+                             "medirlo siempre desde un cero recién puesto")
     args = parser.parse_args()
     if args.all_squares and args.squares:
         parser.error("Elige casillas concretas o --all.")
@@ -298,6 +322,8 @@ def main() -> int:
             parser.error(f"Destino desconocido: {square}")
     if len(set(squares)) != len(squares):
         parser.error("Hay destinos repetidos.")
+    if args.home_each and not args.jog:
+        parser.error("--home-each solo tiene sentido con --jog.")
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     backend = CyberPiBackend(port=args.port)
@@ -323,7 +349,7 @@ def main() -> int:
 
         if args.jog:
             _jog_capture(backend, squares, limits, _load_seeds(POSITIONS_PATH),
-                         captured)
+                         captured, home_each=args.home_each)
         else:
             print("Coloca a mano ambos ejes y mantenlos quietos al pulsar Enter.")
             for square in squares:
