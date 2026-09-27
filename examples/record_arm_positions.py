@@ -9,6 +9,7 @@ antes: solo un servidor puede ocupar el puerto del brazo.
     python3 examples/record_arm_positions.py a1 a2 discard exchange
     python3 examples/record_arm_positions.py --all
     python3 examples/record_arm_positions.py --all --jog --home-each
+    python3 examples/record_arm_positions.py --all --home-each   (a mano)
 
 Hay dos modos:
 
@@ -293,6 +294,37 @@ def _jog_capture(backend, squares, limits, seeds, captured,
                 print(f"   No te he entendido ({exc})." + JOG_HELP)
 
 
+def _hand_capture(backend, squares, limits, captured,
+                  home_each: bool = False) -> None:
+    """Graba colocando el brazo a mano con los motores sueltos.
+
+    Con ``home_each`` cada destino empieza con HOME + STOP (menos el primero,
+    que acaba de referenciar ``main``): el cero se repone antes de cada lectura
+    y un encoder que pierde cuentas al empujarlo a mano no contamina la
+    siguiente casilla. Una lectura fuera de límites se descarta y se repite.
+    """
+    print("Coloca a mano ambos ejes y mantenlos quietos al pulsar Enter.")
+    for index, square in enumerate(squares):
+        if home_each and index > 0:
+            input(f"\nSuelta el brazo y despeja su recorrido; Enter hace HOME "
+                  f"para {square}: ")
+            _rehome(backend)
+            input("HOME terminado. Sostén el brazo; Enter detiene los motores: ")
+            backend.stop()
+        while True:
+            input(f"\nColoca el brazo en {square} → Enter para leer: ")
+            shoulder, elbow = backend.get_position()
+            try:
+                _check_angles(shoulder, elbow, limits)
+            except ArmBackendError as exc:
+                print(f"   {exc} Vuelve a colocarlo.")
+                continue
+            break
+        angles = {"shoulder": round(shoulder, 2), "elbow": round(elbow, 2)}
+        captured[square] = angles
+        print(f'"{square}": {json.dumps(angles, allow_nan=False)}', flush=True)
+
+
 def main() -> int:
     """Captura una lista finita de destinos, sin modificar la tabla real."""
     parser = argparse.ArgumentParser(description=__doc__,
@@ -309,8 +341,8 @@ def main() -> int:
                         help="Grabar MOVIENDO el brazo con los motores en vez "
                              "de colocarlo a mano (recomendado, ver abajo)")
     parser.add_argument("--home-each", action="store_true",
-                        help="Con --jog: hacer HOME antes de cada destino, para "
-                             "medirlo siempre desde un cero recién puesto")
+                        help="Hacer HOME antes de cada destino, para medirlo "
+                             "siempre desde un cero recién puesto")
     args = parser.parse_args()
     if args.all_squares and args.squares:
         parser.error("Elige casillas concretas o --all.")
@@ -322,8 +354,6 @@ def main() -> int:
             parser.error(f"Destino desconocido: {square}")
     if len(set(squares)) != len(squares):
         parser.error("Hay destinos repetidos.")
-    if args.home_each and not args.jog:
-        parser.error("--home-each solo tiene sentido con --jog.")
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     backend = CyberPiBackend(port=args.port)
@@ -351,15 +381,8 @@ def main() -> int:
             _jog_capture(backend, squares, limits, _load_seeds(POSITIONS_PATH),
                          captured, home_each=args.home_each)
         else:
-            print("Coloca a mano ambos ejes y mantenlos quietos al pulsar Enter.")
-            for square in squares:
-                input(f"\nColoca el brazo en {square} → Enter para leer: ")
-                shoulder, elbow = backend.get_position()
-                _check_angles(shoulder, elbow, limits)
-                angles = {"shoulder": round(shoulder, 2), "elbow": round(elbow, 2)}
-                captured[square] = angles
-                print(f'"{square}": {json.dumps(angles, allow_nan=False)}',
-                      flush=True)
+            _hand_capture(backend, squares, limits, captured,
+                          home_each=args.home_each)
     except (KeyboardInterrupt, EOFError):
         print("\nCaptura terminada por el usuario.")
     except (ArmBackendError, OSError, ValueError) as exc:

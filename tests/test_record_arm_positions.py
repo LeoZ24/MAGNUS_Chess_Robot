@@ -194,3 +194,17 @@ def test_jog_r_rehomes_and_returns_to_the_same_order():
     assert names.count("home") == 1
     assert backend.commands[names.index("home") + 1] == ("move_to", 9002.0, -9000.0)
     assert captured == {"e4": {"shoulder": 9002.0, "elbow": -9000.0}}
+
+
+def test_hand_home_each_homes_and_releases_before_every_square_but_the_first():
+    backend = FakeRecorderBackend()
+    backend.connect()
+    captured = {}
+    with patch("builtins.input", side_effect=[""] * 5):
+        recorder._hand_capture(backend, ["e4", "e5"], LIMITS, captured,
+                               home_each=True)
+    names = [c[0] for c in backend.commands]
+    assert names.count("home") == 1
+    # Tras el HOME se sueltan los motores para poder colocarlo a mano.
+    assert names[names.index("home") + 1] == "stop"
+    assert set(captured) == {"e4", "e5"}
