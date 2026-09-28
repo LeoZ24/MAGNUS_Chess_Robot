@@ -41,6 +41,12 @@ ARM_MAGNET_GRADE: str = "N52"           # muy fuerte: puede influir en piezas ad
 ZONE_DISCARD: str = "discard"           # zona de descarte de piezas capturadas
 ZONE_EXCHANGE: str = "exchange"         # zona de intercambio para promociones
 
+# Posición de reposo: FUERA del tablero.  Al terminar cada jugada el brazo se
+# retira ahí, porque plantado en medio del tablero estorba al rival y le tapa
+# el tablero a la cámara.  Es OPCIONAL a propósito: una tabla grabada antes de
+# que esto existiera sigue siendo válida para jugar, solo que sin retirada.
+ZONE_PARK: str = "park"
+
 # --------------------------------------------------------------------------- #
 # ArUco — un mismo diccionario, tres roles con rangos de ID separados
 # --------------------------------------------------------------------------- #

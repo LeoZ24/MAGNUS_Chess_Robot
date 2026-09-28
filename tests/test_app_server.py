@@ -96,6 +96,39 @@ def test_camera_snapshot_and_mjpeg_stream(served):
     assert b"\xff\xd8" in chunk
 
 
+def test_camera_frames_one_by_one_carry_their_number(served):
+    """La interfaz pide la cámara fotograma a fotograma: con el MJPEG la imagen
+    se quedaba en negro sin error si el stream se atascaba."""
+    _, server = served
+    conn = _conn(server)
+    conn.request("GET", "/stream/camera.jpg?after=-1")
+    res = conn.getresponse()
+    data = res.read()
+    assert res.status == 200 and data[:2] == b"\xff\xd8"
+    seq = int(res.getheader("X-Frame-Seq"))
+    assert seq >= 1
+
+    # Pedir uno más nuevo que el último que existe no se cuelga: a lo sumo
+    # espera FRAME_WAIT_S y devuelve lo que haya.
+    conn = _conn(server)
+    conn.request("GET", f"/stream/camera.jpg?after={seq + 1000}")
+    res = conn.getresponse()
+    assert res.status == 200 and res.read()[:2] == b"\xff\xd8"
+
+    conn = _conn(server)
+    conn.request("GET", "/stream/camera.jpg?after=basura")
+    res = conn.getresponse()
+    assert res.status == 200 and res.read()[:2] == b"\xff\xd8"
+
+
+def test_page_does_not_hold_a_camera_stream_open(served):
+    _, server = served
+    conn = _conn(server)
+    conn.request("GET", "/")
+    html = conn.getresponse().read().decode("utf-8")
+    assert "camera.mjpg" not in html
+
+
 def test_events_stream_sends_snapshot(served):
     _, server = served
     conn = _conn(server)

@@ -79,3 +79,21 @@ def test_unknown_position_raises():
     table = make_fake_table(include_zones=False)
     with pytest.raises(UnknownPositionError):
         table.get(config.ZONE_DISCARD)
+
+
+def test_single_position_format_and_legacy_use_same_contact_angles():
+    """Las tablas nuevas y antiguas producen la misma posición de recogida."""
+    legacy = {sq: _fake_entry(i) for i, sq in enumerate(ALL_SQUARES)}
+    flat = {sq: entry["engage"] for sq, entry in legacy.items()}
+    old_table = PositionsTable.from_dict(legacy)
+    new_table = PositionsTable.from_dict(flat)
+    for sq in ALL_SQUARES:
+        assert new_table.get(sq).position == old_table.get(sq).engage
+
+
+@pytest.mark.parametrize("value", [None, True, "9999", float("nan"), float("inf")])
+def test_invalid_single_position_is_rejected(value):
+    raw = {sq: {"shoulder": FAKE_VALUE, "elbow": -FAKE_VALUE} for sq in ALL_SQUARES}
+    raw["e4"]["shoulder"] = value
+    with pytest.raises(PositionsTableError, match="e4"):
+        PositionsTable.from_dict(raw)

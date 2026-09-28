@@ -1,0 +1,270 @@
+{
+  "a1": {
+    "shoulder": 84.0,
+    "elbow": -117.0
+  },
+  "b1": {
+    "shoulder": 84.0,
+    "elbow": -126.0
+  },
+  "c1": {
+    "shoulder": 90.0,
+    "elbow": -128.0
+  },
+  "d1": {
+    "shoulder": 93.0,
+    "elbow": -131.0
+  },
+  "e1": {
+    "shoulder": 100.0,
+    "elbow": -128.0
+  },
+  "f1": {
+    "shoulder": 109.0,
+    "elbow": -123.0
+  },
+  "g1": {
+    "shoulder": 117.0,
+    "elbow": -118.0
+  },
+  "h1": {
+    "shoulder": 132.0,
+    "elbow": -100.0
+  },
+  "a2": {
+    "shoulder": 68.0,
+    "elbow": -142.0
+  },
+  "b2": {
+    "shoulder": 73.0,
+    "elbow": -146.0
+  },
+  "c2": {
+    "shoulder": 78.0,
+    "elbow": -149.0
+  },
+  "d2": {
+    "shoulder": 84.0,
+    "elbow": -149.0
+  },
+  "e2": {
+    "shoulder": 90.0,
+    "elbow": -149.0
+  },
+  "f2": {
+    "shoulder": 99.0,
+    "elbow": -145.0
+  },
+  "g2": {
+    "shoulder": 108.0,
+    "elbow": -138.0
+  },
+  "h2": {
+    "shoulder": 116.0,
+    "elbow": -134.0
+  },
+  "a3": {
+    "shoulder": 58.0,
+    "elbow": -158.0
+  },
+  "b3": {
+    "shoulder": 62.0,
+    "elbow": -163.0
+  },
+  "c3": {
+    "shoulder": 68.0,
+    "elbow": -165.0
+  },
+  "d3": {
+    "shoulder": 75.0,
+    "elbow": -166.0
+  },
+  "e3": {
+    "shoulder": 82.0,
+    "elbow": -164.0
+  },
+  "f3": {
+    "shoulder": 91.0,
+    "elbow": -162.0
+  },
+  "g3": {
+    "shoulder": 100.0,
+    "elbow": -158.0
+  },
+  "h3": {
+    "shoulder": 110.0,
+    "elbow": -150.0
+  },
+  "a4": {
+    "shoulder": 48.0,
+    "elbow": -170.0
+  },
+  "b4": {
+    "shoulder": 53.0,
+    "elbow": -175.0
+  },
+  "c4": {
+    "shoulder": 59.0,
+    "elbow": -179.0
+  },
+  "d4": {
+    "shoulder": 67.0,
+    "elbow": -179.0
+  },
+  "e4": {
+    "shoulder": 75.0,
+    "elbow": -179.0
+  },
+  "f4": {
+    "shoulder": 85.0,
+    "elbow": -175.0
+  },
+  "g4": {
+    "shoulder": 94.0,
+    "elbow": -171.0
+  },
+  "h4": {
+    "shoulder": 105.0,
+    "elbow": -164.0
+  },
+  "a5": {
+    "shoulder": 38.0,
+    "elbow": -184.0
+  },
+  "b5": {
+    "shoulder": 43.0,
+    "elbow": -188.0
+  },
+  "c5": {
+    "shoulder": 50.0,
+    "elbow": -191.0
+  },
+  "d5": {
+    "shoulder": 59.0,
+    "elbow": -193.0
+  },
+  "e5": {
+    "shoulder": 70.0,
+    "elbow": -191.0
+  },
+  "f5": {
+    "shoulder": 79.0,
+    "elbow": -190.0
+  },
+  "g5": {
+    "shoulder": 90.0,
+    "elbow": -184.0
+  },
+  "h5": {
+    "shoulder": 102.0,
+    "elbow": -176.0
+  },
+  "a6": {
+    "shoulder": 26.0,
+    "elbow": -194.0
+  },
+  "b6": {
+    "shoulder": 32.0,
+    "elbow": -200.0
+  },
+  "c6": {
+    "shoulder": 40.0,
+    "elbow": -204.0
+  },
+  "d6": {
+    "shoulder": 52.0,
+    "elbow": -205.0
+  },
+  "e6": {
+    "shoulder": 63.0,
+    "elbow": -204.0
+  },
+  "f6": {
+    "shoulder": 75.0,
+    "elbow": -201.0
+  },
+  "g6": {
+    "shoulder": 88.0,
+    "elbow": -195.0
+  },
+  "h6": {
+    "shoulder": 100.0,
+    "elbow": -187.0
+  },
+  "a7": {
+    "shoulder": 15.0,
+    "elbow": -204.0
+  },
+  "b7": {
+    "shoulder": 20.0,
+    "elbow": -212.0
+  },
+  "c7": {
+    "shoulder": 30.0,
+    "elbow": -215.0
+  },
+  "d7": {
+    "shoulder": 41.0,
+    "elbow": -218.0
+  },
+  "e7": {
+    "shoulder": 59.0,
+    "elbow": -215.0
+  },
+  "f7": {
+    "shoulder": 73.0,
+    "elbow": -212.0
+  },
+  "g7": {
+    "shoulder": 88.0,
+    "elbow": -205.0
+  },
+  "h7": {
+    "shoulder": 102.0,
+    "elbow": -196.0
+  },
+  "a8": {
+    "shoulder": 0.0,
+    "elbow": -215.0
+  },
+  "b8": {
+    "shoulder": 6.0,
+    "elbow": -222.0
+  },
+  "c8": {
+    "shoulder": 17.0,
+    "elbow": -227.0
+  },
+  "d8": {
+    "shoulder": 33.0,
+    "elbow": -228.0
+  },
+  "e8": {
+    "shoulder": 55.0,
+    "elbow": -227.0
+  },
+  "f8": {
+    "shoulder": 75.0,
+    "elbow": -221.0
+  },
+  "g8": {
+    "shoulder": 91.0,
+    "elbow": -213.0
+  },
+  "h8": {
+    "shoulder": 105.0,
+    "elbow": -204.0
+  },
+  "discard": {
+    "shoulder": 23.0,
+    "elbow": -169.0
+  },
+  "exchange": {
+    "shoulder": 6.0,
+    "elbow": -187.0
+  },
+  "park": {
+    "shoulder": 25.0,
+    "elbow": -175.0
+  }
+}

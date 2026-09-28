@@ -33,10 +33,7 @@ def main() -> int:
                         help="Archivo de salida")
     args = parser.parse_args()
 
-    entry = {
-        "approach": {"shoulder": None, "elbow": None},
-        "engage": {"shoulder": None, "elbow": None},
-    }
+    entry = {"shoulder": None, "elbow": None}
     keys = list(ALL_SQUARES) + [config.ZONE_DISCARD, config.ZONE_EXCHANGE]
     template = {key: json.loads(json.dumps(entry)) for key in keys}
 

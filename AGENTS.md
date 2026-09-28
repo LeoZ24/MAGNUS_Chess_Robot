@@ -1,6 +1,6 @@
-# CLAUDE.md — Contexto para Claude Code
+# AGENTS.md — Contexto para Codex
 
-Este archivo es para Claude Code. Contiene todo lo que necesitas saber para
+Este archivo es para Codex. Contiene todo lo que necesitas saber para
 trabajar eficientemente en este proyecto sin preguntar cosas básicas.
 
 ---
@@ -73,17 +73,8 @@ código: `positions.json` se graba directamente en grados de motor.
   cliente (así no hace falta descubrir la IP de la placa). El protocolo son
   líneas de texto: `PING` / `HOME` / `LIMITS` / `ZERO` / `MOVE` / `GRIPPER` /
   `GET` / `STOP`, cada una con su `ACK` o un `ERR <mensaje>`.
-- **Garra: CONFIRMADA, con TRES posiciones del servo** (medidas en el brazo
-  real, en el cliente): `GRIPPER_ENGAGE_ANGLE = 0` baja el imán N52 sobre la
-  pieza y la agarra; `GRIPPER_LIFT_ANGLE = 110` la **levanta sin soltarla**;
-  `GRIPPER_RELEASE_ANGLE = 170` la suelta. ⚠️ `servo_set` solo acepta 0–180
-  (más se recorta a 180), y **no hay forma de darle más fuerza al servo por
-  software**: `servo_set` solo fija el ángulo; el par depende del servo y de la
-  batería. `GRIPPER 1` hace agarrar + levantar
-  seguido y solo responde `ACK` con la pieza ya arriba. ⚠️ Sin el paso de
-  levantar, el brazo arrastraba la pieza por el tablero y se llevaba por delante
-  a las vecinas. No es una pinza mecánica: hombro y codo no dan altura, la da
-  este servo.
+- **Garra: CONFIRMADA.** El servo acerca el imán N52 a la pieza para agarrarla
+  y lo aleja para soltarla. No es una pinza mecánica ni el eje vertical.
 - **Imán de agarre:** N52, 12×3 mm — muy fuerte. Su radio de influencia puede
   desplazar piezas en casillas adyacentes si el brazo pasa muy cerca del
   tablero en movimientos laterales. Por eso la tabla de posiciones debería
@@ -211,11 +202,6 @@ que la punta cae en la casilla; lo que se guarda es la **orden**, no la medida,
 con la flexión ya dentro. Es la misma orden que se mandará jugando.
 
 - **`Enter` graba**; `s` salta; `q` sale (y pregunta antes de tirar el ajuste).
-- `h=85` fija un valor exacto; `h+2 c-1` ajusta los dos ejes en una línea.
-- `p` **prueba a recoger la pieza** (agarra y levanta, Enter la suelta): es la
-  prueba de verdad de que el imán cae centrado.
-- `v` lleva el brazo a la orden **desde lejos y por los dos lados**, como
-  llega jugando. Si la punta no cae igual las dos veces, sube `BACKLASH_DEG`.
 - Si un ajuste se sale de límites se vuelve a la **última orden aceptada**, no
   a la lectura del encoder: la diferencia entre las dos ES la flexión que este
   modo existe para capturar.
@@ -244,42 +230,15 @@ los dos actuadores empujan en contra y se calientan sin mover el brazo.
 
 ### Orden de los ejes y verificación final
 
-`MOVE` mueve **primero el codo y AL FINAL el hombro** (`MOVE_SHOULDER_FIRST =
-False`). Antes era al revés, pero en el brazo real el hombro no aguanta el giro
-del codo: llegaba a 59°, el codo giraba 215° y el hombro acababa en 52° sin
-poder volver (`ERR hombro no mantuvo`). El eje que peor se sostiene va el
-último: después de él no se mueve nada que lo desplace. (Con la pieza
-levantada, desplegar antes de girar ya no arrastra nada.)
+`MOVE` mueve **primero el hombro y luego el codo** (`MOVE_SHOULDER_FIRST`): se
+ve mejor y el codo sigue recogido durante el giro, así que barre menos tablero.
+Al terminar **relee los dos encoders**, porque al desplegar el codo el hombro
+sostiene más brazo y puede ceder después de darlo por bueno:
 
-Al terminar **relee los dos encoders**, porque un eje puede ceder mientras se
-mueve el otro:
-
-- Si cedió más de `MOVE_SAG_DEG` (1.5°), se corrige y la jugada sigue, hasta
-  `MOVE_SAG_PASSES` rondas. Abortar por eso dejaría la pieza a medio camino.
-  Con 2° se daban por buenos justo los "un par de grados" que faltaban; con 1°
-  (igual a `TOLERANCE_DEG`) cualquier temblor disparaba otro repaso.
-- El repaso va **directo** (`approach=False`), sin la compensación de juego:
-  con ella el eje retrocedía `BACKLASH_DEG`, se volvía a pasar, retrocedía… y
-  el brazo se quedaba "buscando" la casilla hasta el timeout del host.
-- **Presupuesto de tiempo:** un `MOVE` deja de afinar a los `MOVE_BUDGET_S`
-  (15 s) y responde con lo que haya (`ACK` si está dentro de `MOVE_FAIL_DEG`,
-  si no `ERR`). El host espera `command_timeout` = 45 s, así que nunca corta él.
+- Si cedió poco (`MOVE_SAG_DEG`), se corrige y la jugada sigue. Abortar por eso
+  dejaría la pieza a medio camino, que es peor.
 - Si no se deja corregir, `ERR ... no mantuvo ...`: la retención no está
   haciendo su trabajo y hay que decirlo, no mover el brazo a ciegas.
-
-⚠️ **El hombro se va solo hacia negativo** (59→52, 52→47) aunque no se mueva
-nada más: hay una carga fija que lo empuja. Dos defensas en el cliente:
-
-- **Entra a su destino a favor de la carga** (`SHOULDER_APPROACH_SIGN = -1`,
-  bajando). Llegando contra la carga, al parar el motor la holgura de la
-  reductora cedía hacia la carga y el eje caía. El codo entra subiendo
-  (`ELBOW_APPROACH_SIGN = 1`).
-- **`_creep_to` retiene el eje en las pausas entre impulsos** (la suelta solo
-  mientras empuja). Sin eso, un eje cargado perdía en cada pausa lo que ganaba
-  en cada impulso y el repaso nunca lo devolvía.
-
-Si aun así cae: comprueba con los motores apagados si el brazo desplegado gira
-solo hacia ese lado (base inclinada, cable tirando, contrapeso).
 
 Los ángulos realmente alcanzados vuelven en `ACK MOVE <hombro> <codo>`, leídos
 al final de verdad y no antes de mover el otro eje.
@@ -471,13 +430,7 @@ HTTP de la librería estándar + HTML/CSS/JS sin frameworks).
   `snapshot()` JSON con TODO el estado. `step()` es una iteración, testeable
   sin hilos ni servidor
 - `server.py` — rutas: `/` (página), `/api/state`, `/api/events` (SSE),
-  `/api/command` (POST), `/stream/camera.jpg?after=<n>` (un fotograma, espera
-  a uno más nuevo que `n`) y `/stream/camera.mjpg`
-- ⚠️ La interfaz pide la cámara **fotograma a fotograma**, no con el MJPEG: un
-  stream MJPEG atascado o en cola (límite de conexiones del navegador, con el
-  SSE ya abierto y varias pestañas) dejaba la imagen **en negro sin error** y
-  nunca se reintentaba. `startCameraFeed()` en `app.js` corta y repite la
-  petición que no llega
+  `/api/command` (POST), `/stream/camera.mjpg`
 - `static/` — la interfaz. El tablero se dibuja en el navegador (SVG + piezas
   animadas por diff de placement); la cámara llega como MJPEG
 
@@ -516,13 +469,6 @@ El cliente que corre en la placa está versionado en
 CyberPi con mBlock en modo UPLOAD). Si lo editas en mBlock, copia el resultado
 de vuelta al repositorio.
 
-⚠️ **La placa tiene MUY poca pila.** Una sola función intermedia de más entre
-`handle()` y las `EM_*` bastó para `ERR maximum recursion depth exceeded`
-antes de mover nada. No envuelvas funciones del camino de un `MOVE` en otras
-(ni para un `try/finally`): `test_move_does_not_nest_deeper_than_the_board_allows`
-mide la profundidad y falla si crece. Por eso `_drive_turns` llama a `EM_turn`
-directamente, sin pasar por `_hw_turn`.
-
 **Si la subida desde mBlock se queda colgada en 1 %**, no es el código: esa
 fase ya pasó ("processing code completed"). Es que algo más tiene tomado el
 puerto o la placa está ocupada. Por orden: parar el programa en marcha (botón
@@ -537,11 +483,8 @@ Pendiente (bloqueado por hardware):
   `ELBOW_TRAVEL_DEG` (ahora son 300° provisionales, generosos de más)
 - Grabar `positions.json` real calibrando el brazo **desde el cero
   referenciado** (`examples/generate_positions_template.py` genera la plantilla)
-- Comprobar `BACKLASH_DEG` (3° por defecto) con la tecla `v` del modo `--jog`.
-  Está **activado** porque la reductora interna del motor encoder tiene juego
-  que el encoder no ve: el último tramo entra siempre en el mismo sentido
-  (`SHOULDER_APPROACH_SIGN` / `ELBOW_APPROACH_SIGN`), así la tabla grabada con pasos pequeños y la partida con
-  giros largos llegan igual. Debe ser mayor que el juego real
+- Ajustar `BACKLASH_DEG` si el brazo no repite al llegar a un ángulo desde un
+  lado o desde el otro
 
 ---
 
@@ -726,23 +669,6 @@ tests/             # 320+ tests; todos corren sin hardware
 
 ---
 
-## ⛔ Automatizaciones de la sesión (consumo de tokens)
-
-**Prohibido programar check-ins recurrentes, en cadena o auto-renovables**
-(`send_later`, `create_trigger`, `ScheduleWakeup`, `/loop`, cron, "revisar
-el PR cada hora", etc.) **sin que el usuario lo pida explícitamente en ese
-mismo mensaje.** Un check-in horario de un PR agotó todos los tokens
-semanales del proyecto en dos días.
-
-- Después de crear o empujar un PR: **NO** llamar a `send_later`, **NO**
-  re-armar nada "hasta que se fusione". Con `subscribe_pr_activity` es
-  suficiente, y solo si el usuario lo pide.
-- Si un recordatorio programado se dispara y no hay nada que hacer,
-  **terminar sin re-armar el siguiente**. Nunca poner "re-armar el próximo
-  check-in" dentro del texto de un recordatorio.
-- Si el usuario pide vigilar algo, usar **un solo** `send_later` con hora fija
-  y decirle cuándo se disparará; no encadenar.
-
 ## Lo que NO debes hacer
 
 - ❌ No escribir cinemática inversa (IK) como parte del flujo de juego en vivo del brazo — los movimientos son pregrabados, se buscan en una tabla
@@ -809,7 +735,7 @@ brew install stockfish          # macOS
 
 - Prefer a single focused pass over repeated checks.
 - Do not run background processes unless I explicitly request them.
-- Do not create scripts intended to repeatedly invoke Claude Code unless I explicitly request them.
+- Do not create scripts intended to repeatedly invoke Codex unless I explicitly request them.
 
 ## Default Behavior
 
