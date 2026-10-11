@@ -8,7 +8,13 @@ para cada tipo de jugada — que es exactamente lo que el brazo reproducirá.
 import pytest
 
 from magnus import config
-from magnus.arm import ArmNode, FakeArmBackend, IncompleteMoveError, make_fake_table
+from magnus.arm import (
+    ArmNode,
+    ArmRejectedError,
+    FakeArmBackend,
+    IncompleteMoveError,
+    make_fake_table,
+)
 from magnus.core.messages import MoveResponse
 
 
@@ -199,3 +205,48 @@ def test_a_table_without_park_still_plays():
     pasos = _steps_as_strings(arm.plan(resp))
     assert pasos == ["grip_off"] + _pick_place("e2", "e4")
     assert not any(config.ZONE_PARK in paso for paso in pasos)
+
+
+# --------------------------------------------------------------------------- #
+# Fallos de la placa durante la ejecucion
+# --------------------------------------------------------------------------- #
+
+class _RejectingBackend(FakeArmBackend):
+    """Backend falso cuya placa responde ERR al ir a ciertas posiciones."""
+
+    def __init__(self, reject):
+        super().__init__()
+        self._reject = reject
+
+    def move_to(self, shoulder, elbow):
+        super().move_to(shoulder, elbow)
+        if (shoulder, elbow) in self._reject:
+            raise ArmRejectedError("ERR codo no mantuvo (simulado)")
+
+
+def _angles(table, name):
+    pos = table.get(name).position
+    return (pos.shoulder, pos.elbow)
+
+
+def test_a_rejected_park_does_not_abort_the_move(caplog):
+    """Retirarse es el ultimo paso: la pieza ya esta colocada. Que el brazo no
+    quede fino en reposo no puede cortar la partida."""
+    table = make_fake_table()
+    backend = _RejectingBackend({_angles(table, config.ZONE_PARK)})
+    arm = ArmNode(backend=backend, table=table)
+    resp = MoveResponse(uci="e2e4", from_square="e2", to_square="e4")
+    with caplog.at_level("WARNING", logger="magnus.arm.node"):
+        arm.execute(resp)
+    assert "reposo" in caplog.text
+
+
+def test_a_rejected_square_still_aborts():
+    """Sobre el tablero si importa: sin llegar a la casilla, no se agarra."""
+    table = make_fake_table()
+    backend = _RejectingBackend({_angles(table, "e2")})
+    arm = ArmNode(backend=backend, table=table)
+    resp = MoveResponse(uci="e2e4", from_square="e2", to_square="e4")
+    with pytest.raises(ArmRejectedError):
+        arm.execute(resp)
+    assert ("gripper", True) not in backend.commands

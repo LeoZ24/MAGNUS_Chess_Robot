@@ -10,7 +10,12 @@ import threading
 
 import pytest
 
-from magnus.arm.backend import ArmBackendError, CyberPiBackend, FakeArmBackend
+from magnus.arm.backend import (
+    ArmBackendError,
+    ArmRejectedError,
+    CyberPiBackend,
+    FakeArmBackend,
+)
 
 
 class FakeCyberPi:
@@ -173,6 +178,38 @@ def test_move_rejects_a_wrong_answer(link):
     backend, _ = link({"MOVE": "ACK GRIPPER"})
     with pytest.raises(ArmBackendError, match="ACK MOVE"):
         backend.move_to(1.0, 2.0)
+
+
+def _fails_then_acks(failures):
+    """Respuesta a MOVE que da ``failures`` ERR seguidos y luego ACK."""
+    calls = {"n": 0}
+
+    def reply(line):
+        calls["n"] += 1
+        if calls["n"] <= failures:
+            return "ERR codo no mantuvo -161.0 (quedo en -173)"
+        return "ACK MOVE 30.00 -161.00"
+    return reply
+
+
+def test_move_retries_when_an_axis_did_not_hold(link, caplog):
+    """Un eje que cede no pierde el cero: repetir el MOVE absoluto lo arregla
+    y la partida sigue (antes el primer ERR cortaba la jugada)."""
+    backend, cyber = link({"MOVE": _fails_then_acks(1)})
+    with caplog.at_level("WARNING", logger="magnus.arm.backend"):
+        backend.move_to(30.0, -161.0)
+    moves = [c for c in cyber.received if c.startswith("MOVE")]
+    assert moves == ["MOVE 30.00 -161.00"] * 2
+    assert backend.last_reached == (30.0, -161.0)
+    assert "reintento 1" in caplog.text
+
+
+def test_move_gives_up_after_the_retries(link):
+    backend, cyber = link({"MOVE": _fails_then_acks(99)})
+    with pytest.raises(ArmRejectedError, match="no mantuvo"):
+        backend.move_to(30.0, -161.0)
+    moves = [c for c in cyber.received if c.startswith("MOVE")]
+    assert len(moves) == 1 + backend.move_retries
 
 
 def test_get_position_parses_the_pair(link):

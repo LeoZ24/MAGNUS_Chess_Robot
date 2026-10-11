@@ -266,6 +266,13 @@ mueve el otro:
   si no `ERR`). El host espera `command_timeout` = 45 s, así que nunca corta él.
 - Si no se deja corregir, `ERR ... no mantuvo ...`: la retención no está
   haciendo su trabajo y hay que decirlo, no mover el brazo a ciegas.
+- **El host repite el `MOVE` rechazado** (`CyberPiBackend.move_retries`, 2 por
+  defecto). Es seguro: el `MOVE` es absoluto y el encoder no pierde la cuenta
+  aunque un eje ceda (o la placa suelte los motores al dar `ERR`), así que
+  repetirlo lo lleva al mismo sitio. Solo se repiten los `ERR`
+  (`ArmRejectedError`), nunca un timeout: la respuesta tardía desfasaría la
+  conversación. Si aun así falla el paso final a `park`, se registra y la
+  jugada se da por hecha (la pieza ya está colocada); en una casilla sí aborta.
 
 ⚠️ **El hombro se va solo hacia negativo** (59→52, 52→47) aunque no se mueva
 nada más: hay una carga fija que lo empuja. Dos defensas en el cliente:

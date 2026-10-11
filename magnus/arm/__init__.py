@@ -12,7 +12,13 @@ Componentes:
 """
 
 from .arm_node import ArmNode, ArmNodeError, ArmStep, IncompleteMoveError
-from .backend import ArmBackend, ArmBackendError, CyberPiBackend, FakeArmBackend
+from .backend import (
+    ArmBackend,
+    ArmBackendError,
+    ArmRejectedError,
+    CyberPiBackend,
+    FakeArmBackend,
+)
 from .positions_table import (
     ALL_SQUARES,
     JointAngles,
@@ -30,6 +36,7 @@ __all__ = [
     "IncompleteMoveError",
     "ArmBackend",
     "ArmBackendError",
+    "ArmRejectedError",
     "CyberPiBackend",
     "FakeArmBackend",
     "ALL_SQUARES",

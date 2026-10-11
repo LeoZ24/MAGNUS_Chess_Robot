@@ -44,6 +44,16 @@ class ArmBackendError(Exception):
     """Error de comunicación o ejecución en el backend del brazo."""
 
 
+class ArmRejectedError(ArmBackendError):
+    """La placa respondió ``ERR`` a un comando.
+
+    A diferencia de un timeout o una conexión caída, aquí la conversación sigue
+    sana (cada comando tuvo su respuesta), así que repetir el comando es
+    seguro.  Un ``MOVE`` además es ABSOLUTO: repetirlo lleva el brazo al mismo
+    sitio venga de donde venga, porque el encoder no pierde la cuenta.
+    """
+
+
 class ArmBackend(ABC):
     """Interfaz que debe implementar cualquier controlador físico del brazo."""
 
@@ -171,6 +181,7 @@ class CyberPiBackend(ArmBackend):
         accept_timeout: float = 90.0,
         command_timeout: float = 45.0,
         home_timeout: float = 75.0,
+        move_retries: int = 2,
     ):
         """
         Parámetros:
@@ -184,12 +195,17 @@ class CyberPiBackend(ArmBackend):
             home_timeout: segundos máximos para el referenciado.  Es aparte
                 porque ``HOME`` busca dos topes con dos pasadas cada uno y
                 tarda bastante más que un movimiento normal.
+            move_retries: veces que se repite un ``MOVE`` que la placa
+                rechazó con ``ERR`` (p. ej. "codo no mantuvo": un eje cedió
+                al mover el otro).  El cero no se pierde con eso, así que
+                repetir la orden lo devuelve a su sitio sin cortar la partida.
         """
         self.bind_host = bind_host
         self.port = port
         self.accept_timeout = accept_timeout
         self.command_timeout = command_timeout
         self.home_timeout = home_timeout
+        self.move_retries = move_retries
 
         self._server: socket.socket | None = None
         self._conn: socket.socket | None = None
@@ -298,7 +314,7 @@ class CyberPiBackend(ArmBackend):
             raise ArmBackendError(f"Fallo al enviar '{text}': {e}") from e
         resp = self._read_line()
         if resp.startswith("ERR"):
-            raise ArmBackendError(f"La CyberPi rechazó '{text}': {resp}")
+            raise ArmRejectedError(f"La CyberPi rechazó '{text}': {resp}")
         return resp
 
     def _expect(self, text: str, expected: str) -> None:
@@ -314,7 +330,24 @@ class CyberPiBackend(ArmBackend):
     def move_to(self, shoulder: float, elbow: float) -> None:
         # Formato con 2 decimales: suficiente para grados de motor, evita
         # notación científica que confundiría al parser del cliente.
-        resp = self._command(f"MOVE {shoulder:.2f} {elbow:.2f}")
+        text = f"MOVE {shoulder:.2f} {elbow:.2f}"
+        # Un ERR de la placa ("codo no mantuvo", "no alcanzo") no deja el brazo
+        # perdido: el encoder sigue contando desde el cero de HOME y el MOVE es
+        # absoluto, así que repetirlo lo lleva al mismo sitio.  Solo se repiten
+        # los ERR: tras un timeout la respuesta tardía llegaría como respuesta
+        # al reintento y la conversación quedaría desfasada.
+        attempt = 0
+        while True:
+            try:
+                resp = self._command(text)
+                break
+            except ArmRejectedError as e:
+                if attempt >= self.move_retries:
+                    raise
+                attempt += 1
+                logger.warning(
+                    "%s — reintento %d de %d.", e, attempt, self.move_retries
+                )
         if not resp.startswith("ACK MOVE"):
             raise ArmBackendError(
                 f"Respuesta inesperada a MOVE: {resp!r} (esperaba 'ACK MOVE')"

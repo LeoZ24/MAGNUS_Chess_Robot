@@ -39,7 +39,7 @@ from typing import Callable, Optional
 
 from .. import config
 from ..core.messages import MoveResponse
-from .backend import ArmBackend
+from .backend import ArmBackend, ArmRejectedError
 from .positions_table import PositionsTable
 
 logger = logging.getLogger("magnus.arm.node")
@@ -219,7 +219,20 @@ class ArmNode:
     def _run_step(self, step: ArmStep) -> None:
         if step.action == "move":
             angles = self._table.get(step.target).position
-            self._backend.move_to(angles.shoulder, angles.elbow)
+            try:
+                self._backend.move_to(angles.shoulder, angles.elbow)
+            except ArmRejectedError as exc:
+                # Retirarse a reposo es el ULTIMO paso: la pieza ya esta en su
+                # casilla. Si la placa no consigue dejarlo fino ahi (y el
+                # backend ya lo reintento), cortar la partida por eso seria
+                # peor que un brazo un poco fuera de sitio fuera del tablero.
+                # Solo con un ERR de la placa: una conexion caida si es fatal.
+                if step.target != config.ZONE_PARK:
+                    raise
+                logger.warning(
+                    "No se pudo dejar el brazo fino en reposo (%s); la jugada "
+                    "ya esta hecha, se sigue.", exc,
+                )
         elif step.action == "grip_on":
             self._backend.set_gripper(True)
         elif step.action == "grip_off":
