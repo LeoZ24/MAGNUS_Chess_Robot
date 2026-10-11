@@ -81,7 +81,7 @@
     const r = parseInt(sq[1], 10);
     return state.flip ? [7 - f, r - 1] : [f, 8 - r];
   }
-  function isLight(sq) { return (FILES.indexOf(sq[0]) + parseInt(sq[1], 10)) % 2 === 1; }
+  function isLight(sq) { return (FILES.indexOf(sq[0]) + parseInt(sq[1], 10)) % 2 === 0; }
   function fmt(n) { return String(n).padStart(2, "0"); }
   function el(tag, cls, text) {
     const node = document.createElement(tag);
