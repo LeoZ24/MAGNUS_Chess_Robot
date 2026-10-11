@@ -31,7 +31,12 @@ from ..core.messages import MoveResponse
 from ..engine.difficulty import DIFFICULTY_PRESETS, DifficultyLevel
 from ..vision.aruco_detector import Detection
 from ..vision.board_pose import BoardPose
-from ..vision.game_state import GameTracker, NoMatchingMoveError, board_placement
+from ..vision.game_state import (
+    GameTracker,
+    IllegalPositionError,
+    NoMatchingMoveError,
+    board_placement,
+)
 from ..vision.piece_map import ARUCO_TO_PIECE, PIECE_COUNTS
 from ..vision.synthetic import render_board_image
 from ..vision.vision_node import CameraBackend, CameraError
@@ -330,6 +335,27 @@ class GameSession:
             return None
         if move is None:
             return None
+        return self._record(before, move)
+
+    def apply_robot_move(self, uci: str) -> Optional[str]:
+        """Da por jugada la jugada planificada SIN esperar a la cámara.
+
+        Es para cuando el brazo ya colocó la pieza: la cámara la confirmaría
+        tarde (el propio brazo le tapa el tablero).  Solo acepta la jugada que
+        está planificada y en el turno del robot; devuelve su SAN o ``None``.
+        """
+        if (self.planned is None or self.planned.uci != uci
+                or self.board.turn != self.robot_color):
+            return None
+        before = self.board.copy()
+        try:
+            move = self.tracker.apply_move(uci)
+        except IllegalPositionError:
+            return None
+        return self._record(before, move)
+
+    def _record(self, before: chess.Board, move: chess.Move) -> str:
+        """Apunta una jugada ya aplicada al tracker; devuelve su SAN."""
         san = before.san(move)
         self.history_san.append(san)
         self.last_rejected = None

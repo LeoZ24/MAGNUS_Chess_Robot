@@ -277,3 +277,37 @@ def test_home_accepts_the_angles_the_board_reports(link):
     """HOME devuelve la pose real tras referenciar, no un 0,0 inventado."""
     backend, _ = link({"HOME": "ACK HOME 0.0 0.0"})
     backend.home()
+
+
+# --------------------------------------------------------------------------- #
+# Tolerancia en MOVE (poses de fuera del tablero)
+# --------------------------------------------------------------------------- #
+
+def test_move_sends_the_tolerance_as_a_third_argument(link):
+    backend, cyber = link({"MOVE": "ACK MOVE 10.00 20.00"})
+    backend.move_to(12.0, -7.0, tolerance=3.0)
+    assert cyber.received[-1] == "MOVE 12.00 -7.00 3.00"
+
+
+def test_loose_move_does_not_warn_inside_its_tolerance(link, caplog):
+    backend, _ = link({"MOVE": "ACK MOVE 27.50 20.00"})
+    with caplog.at_level("WARNING", logger="magnus.arm.backend"):
+        backend.move_to(30.0, 20.0, tolerance=3.0)
+    assert "corto" not in caplog.text
+
+
+def test_an_old_client_without_tolerance_still_moves(link, caplog):
+    """El cliente antiguo rechaza el tercer argumento: se repite sin él, una
+    sola vez, y no se vuelve a mandar."""
+    def reply(line):
+        if len(line.split()) != 3:
+            return "ERR MOVE requiere 2 argumentos"
+        return "ACK MOVE 30.00 20.00"
+
+    backend, cyber = link({"MOVE": reply})
+    with caplog.at_level("WARNING", logger="magnus.arm.backend"):
+        backend.move_to(30.0, 20.0, tolerance=3.0)
+        backend.move_to(30.0, 20.0, tolerance=3.0)
+    moves = [c for c in cyber.received if c.startswith("MOVE")]
+    assert moves == ["MOVE 30.00 20.00 3.00", "MOVE 30.00 20.00", "MOVE 30.00 20.00"]
+    assert "cyberpi_arm_client" in caplog.text

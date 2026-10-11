@@ -28,6 +28,7 @@ from .. import config
 from ..arm.arm_node import ArmNode, ArmNodeError, ArmStep
 from ..arm.backend import ArmBackend, ArmBackendError, CyberPiBackend, FakeArmBackend
 from ..arm.positions_table import (
+    ALL_SQUARES,
     PositionsReport,
     PositionsTable,
     PositionsTableError,
@@ -54,6 +55,48 @@ ZONE_LABELS = {"discard": "zona de descarte", "exchange": "zona de intercambio"}
 # La retirada no se describe como "mover a <sitio>": lo que le importa a quien
 # mira la pantalla es que el brazo deja el tablero libre.
 STEP_OVERRIDES = {("move", config.ZONE_PARK): "Retirarse del tablero"}
+
+
+def release_index(plan: list[ArmStep]) -> int:
+    """Índice del último "soltar" del plan: hecho ese paso, la jugada ya está
+    colocada en el tablero y solo queda retirarse."""
+    for index in range(len(plan) - 1, -1, -1):
+        if plan[index].action == "grip_off":
+            return index
+    return len(plan) - 1
+
+
+def placement_during(placement: dict[str, str], plan: list[ArmStep], done: int,
+                     resp: MoveResponse) -> dict[str, str]:
+    """Placement que hay en el tablero con los ``done`` primeros pasos hechos.
+
+    Sirve para que la pantalla siga al brazo pieza a pieza en vez de esperar a
+    la cámara, a la que el propio brazo le tapa el tablero mientras trabaja.
+    Cada pieza cambia de sitio al SOLTARLA (no al levantarla), así la interfaz
+    la ve deslizarse de su casilla a la nueva.  Función pura: no sabe ajedrez,
+    solo reproduce lo que hace el brazo.
+    """
+    board = dict(placement)
+    promoted: Optional[str] = None
+    if resp.promotion:
+        mover = placement.get(resp.from_square, "P")
+        promoted = resp.promotion.upper() if mover.isupper() else resp.promotion.lower()
+    at: Optional[str] = None            # dónde está el brazo
+    picked: Optional[str] = None        # de dónde cogió lo que lleva
+    for step in plan[:done]:
+        if step.action == "move":
+            at = step.target
+        elif step.action == "grip_on":
+            picked = at
+        elif step.action == "grip_off" and picked is not None:
+            if picked in ALL_SQUARES:
+                piece = board.pop(picked, None)
+            else:
+                piece = promoted if picked == config.ZONE_EXCHANGE else None
+            if piece is not None and at in ALL_SQUARES:
+                board[at] = piece
+            picked = None
+    return board
 
 
 class ArmStopped(ArmNodeError):
@@ -103,6 +146,7 @@ class ArmSupervisor:
         self._status = "off"          # off | connecting | homing | ready | busy | error
         self._error: Optional[str] = None
         self._steps: list[str] = []
+        self._plan: list[ArmStep] = []
         self._step_index = -1
         self._executing_uci: Optional[str] = None
         self._last_uci: Optional[str] = None
@@ -145,6 +189,18 @@ class ArmSupervisor:
         """Vuelve a leer ``positions.json`` (por si se acaba de calibrar)."""
         self._report = inspect_positions_file(self._positions_path)
         return self._report
+
+    def progress(self) -> tuple[Optional[str], list[ArmStep], int]:
+        """``(jugada en curso, su plan, pasos TERMINADOS)``.
+
+        ``(None, [], 0)`` si no está ejecutando nada.  El índice del paso en
+        curso se fija justo antes de empezarlo, así que coincide con los pasos
+        ya terminados.
+        """
+        with self._lock:
+            if self._executing_uci is None:
+                return None, [], 0
+            return self._executing_uci, list(self._plan), max(0, self._step_index)
 
     def snapshot(self) -> dict:
         with self._lock:
@@ -368,6 +424,7 @@ class ArmSupervisor:
             self._status = "busy"
             self._error = None
             self._steps = [describe_step(s) for s in plan]
+            self._plan = list(plan)
             self._step_index = -1
             self._executing_uci = resp.uci
             self._stop_flag.clear()

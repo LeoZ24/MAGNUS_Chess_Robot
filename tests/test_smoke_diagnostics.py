@@ -16,7 +16,7 @@ class FakeDiagnosticArm:
         self.error = error
         self.moves = []
 
-    def move_to(self, shoulder, elbow):
+    def move_to(self, shoulder, elbow, tolerance=None):
         self.moves.append((shoulder, elbow))
         if self.error:
             raise self.error

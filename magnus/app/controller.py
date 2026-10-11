@@ -40,7 +40,7 @@ from ..vision.board_pose import BoardPose, BoardPoseError
 from ..vision.fen_builder import placement_to_fen_field
 from ..vision.game_state import GameTracker
 from ..vision.vision_node import CameraBackend, CameraError
-from .arm_bridge import ArmSupervisor
+from .arm_bridge import ArmSupervisor, placement_during, release_index
 from .overlays import draw_camera_overlays
 from .session import (
     STABLE_FRAMES,
@@ -55,7 +55,7 @@ from .session import (
     find_orientation,
     read_placement,
 )
-from .settings import ARM_MODE_OFF, ARM_MODE_SIMULATED, AppSettings
+from .settings import ARM_MODE_CYBERPI, ARM_MODE_OFF, ARM_MODE_SIMULATED, AppSettings
 
 logger = logging.getLogger("magnus.app.controller")
 
@@ -536,10 +536,16 @@ class MagnusController:
             self._emit("error", self.arm.snapshot().get("error") or "El brazo no está listo")
 
     def _cmd__arm_finished(self, uci: str, ok: bool, error: Optional[str], fen: str) -> None:
+        # Si la jugada ya se dio por hecha al soltar la pieza, lo que pueda
+        # pasar después (la retirada) no la deshace.
+        committed = self.session.tracker.fen() != fen
         if ok:
-            # En el mundo simulado, la jugada "física" la hace el brazo simulado.
-            if self.synth is not None and self.in_game and self.session.tracker.fen() == fen:
-                self.synth.push(uci)
+            # Normalmente ya se apuntó al soltar la pieza (_arm_progress_logic);
+            # esto cubre un brazo que termina entre dos frames.
+            if not committed and self.in_game and self._arm_assumes_success():
+                self._arm_commit(uci)
+        elif committed:
+            self._emit("error", f"Brazo (al retirarse, la jugada ya está hecha): {error}")
         else:
             self._emit("error", f"Brazo: {error}")
             # La jugada sigue pendiente, pero ya no se relanza sola: el humano
@@ -548,6 +554,41 @@ class MagnusController:
             self._arm_held_uci = uci
             self._arm_done_uci = None
             self._arm_pending = self.in_game
+
+    def _arm_assumes_success(self) -> bool:
+        """¿Se da por buena la jugada del brazo sin esperar a la cámara?
+
+        Solo si alguien coloca la pieza de verdad: el brazo real o el mundo
+        simulado.  El brazo simulado con una cámara real no mueve nada, así que
+        ahí sigue esperando a que el humano mueva la pieza y la cámara la vea.
+        """
+        return self.arm is not None and (self.arm.mode == ARM_MODE_CYBERPI
+                                         or self.synth is not None)
+
+    def _arm_progress_logic(self) -> None:
+        """Apunta la jugada del robot en cuanto el brazo suelta la última pieza.
+
+        No espera a la cámara: el brazo casi nunca falla y, mientras trabaja y
+        se retira, le tapa el tablero a la cámara.  Si aun así la pieza no
+        quedó bien, la siguiente jugada lo destapa: el brazo no vuelve a
+        arrancar hasta que la cámara ve el tablero tal y como debe estar.
+        """
+        if not (self.in_game and self._arm_assumes_success()):
+            return
+        uci, plan, done = self.arm.progress()
+        planned = self.session.planned
+        if uci is not None and planned is not None and planned.uci == uci \
+                and done > release_index(plan):
+            self._arm_commit(uci)
+
+    def _arm_commit(self, uci: str) -> None:
+        san = self.session.apply_robot_move(uci)
+        if san is None:
+            return
+        # En el mundo simulado la pieza la "mueve" el brazo simulado.
+        if self.synth is not None:
+            self.synth.push(uci)
+        self._on_move_seen(san)
 
     # -- sintético -------------------------------------------------------- #
     def _cmd_synthetic_move(self, uci: str) -> None:
@@ -585,6 +626,7 @@ class MagnusController:
             confirmed = self.latch.update(self.detector.detect(frame))
             self._update_pose_and_placement(confirmed)
             self._game_logic()
+            self._arm_progress_logic()
             self._voice_logic()
             self._arm_logic()
             self._synthetic_logic()
@@ -597,6 +639,7 @@ class MagnusController:
             # Sin cámara: se siguen atendiendo engine/brazo/voz para que la
             # interfaz no se quede muerta.
             self._game_logic(frame_ok=False)
+            self._arm_progress_logic()
         self._publish_snapshot()
 
     def _read_frame(self) -> Optional[np.ndarray]:
@@ -871,6 +914,12 @@ class MagnusController:
             camera_label = "TABLERO SIMULADO"
         else:
             camera_label = f"CÁMARA {self.settings.camera_index}"
+        shown_placement = session.tracker.placement() if in_game else dict(self._placement)
+        if planned is not None and self.arm is not None and self._arm_assumes_success():
+            # La pantalla sigue al brazo pieza a pieza (la cámara está tapada).
+            uci, plan, done = self.arm.progress()
+            if uci == planned.uci and done:
+                shown_placement = placement_during(shown_placement, plan, done, planned)
         if in_game:
             fen = session.tracker.fen()
         else:
@@ -897,7 +946,7 @@ class MagnusController:
             "turn": ("white" if session.board.turn == chess.WHITE else "black") if in_game else None,
             "robot_side": self.settings.robot_side,
             "board": {
-                "placement": session.tracker.placement() if in_game else dict(self._placement),
+                "placement": shown_placement,
                 "last_move": session.last_move_uci() if in_game else None,
                 "planned": {
                     "uci": planned.uci, "san": planned.san,

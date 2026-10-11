@@ -766,3 +766,51 @@ def test_creep_holds_the_axis_between_pulses(client):
     hardware.EM_get_angle = falls_when_free
     reached = module._creep_to(52.0, "EM1", "hombro")
     assert abs(reached - 52.0) <= module.TOLERANCE_DEG
+
+
+# --------------------------------------------------------------------------- #
+# Poses de fuera del tablero: MOVE con tolerancia (cuarto argumento)
+# --------------------------------------------------------------------------- #
+
+def test_loose_move_skips_backlash_and_pulses(client):
+    """Fuera del tablero no se afina: ni compensacion de juego ni impulsos."""
+    module, hardware = client
+    hardware.angles["EM1"] = 60.0           # vendria "del lado malo"
+    hardware.fraction = 0.95                # el giro se queda a 1.5 grados
+    assert module.handle("MOVE 30 0 3").startswith("ACK MOVE")
+    shoulder_turns = [t for t in hardware.turns if t[2] == "EM1"]
+    assert len(shoulder_turns) == 1         # un solo giro, sin "pasarse"
+    assert not any(event[0] == "power" for event in hardware.events)
+    assert abs(hardware.angles["EM1"] - 30.0) <= 3.0
+
+
+def test_loose_move_does_not_fail_inside_its_tolerance(client):
+    """Quedarse a 4 grados es ERR con la precision normal, no fuera del tablero."""
+    module, hardware = client
+    hardware.fraction = 0.0                 # nada lo mueve: se queda donde esta
+    hardware.angles["EM1"] = 26.0
+    assert module.handle("MOVE 30 0 3").startswith("ACK MOVE")
+    hardware.angles["EM1"] = 26.0
+    with pytest.raises(ValueError):
+        module.handle("MOVE 30 0")
+
+
+def test_tolerance_only_lasts_one_move(client):
+    module, hardware = client
+    module.handle("MOVE 30 0 3")
+    assert module._tol == module.TOLERANCE_DEG and module._slack == 0.0
+
+
+def test_tolerance_can_only_relax_precision(client):
+    """Pedir 0.1 no lo vuelve MAS exigente que lo normal (ni lo deja buscando)."""
+    module, hardware = client
+    seen = []
+    hardware.after_turn = lambda port: seen.append(module._tol)
+    module.handle("MOVE 30 0 0.1")
+    assert seen and all(tol == module.TOLERANCE_DEG for tol in seen)
+
+
+def test_move_with_wrong_argument_count_is_rejected(client):
+    module, _ = client
+    assert module.handle("MOVE 30").startswith("ERR MOVE requiere")
+    assert module.handle("MOVE 30 0 3 4").startswith("ERR MOVE requiere")

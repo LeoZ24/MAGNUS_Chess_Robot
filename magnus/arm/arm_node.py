@@ -212,15 +212,35 @@ class ArmNode:
         for index, step in enumerate(steps):
             if on_step is not None:
                 on_step(index, step)
-            self._run_step(step)
+            following = steps[index + 1] if index + 1 < len(steps) else None
+            self._run_step(step, following)
         logger.info("Jugada %s ejecutada (%d pasos).", resp.uci, len(steps))
         return steps
 
-    def _run_step(self, step: ArmStep) -> None:
+    @staticmethod
+    def step_tolerance(step: ArmStep, following: Optional[ArmStep]) -> Optional[float]:
+        """Error aceptable para un ``move`` (``None`` = la precisión normal).
+
+        Fuera del tablero no hace falta llegar fino (ver
+        ``config.ARM_OFFBOARD_TOLERANCE_DEG``), salvo que el paso siguiente sea
+        agarrar: para recoger una pieza el imán tiene que caer encima.
+        """
+        if step.action != "move" or step.target not in config.ARM_OFFBOARD_ZONES:
+            return None
+        if following is not None and following.action == "grip_on":
+            return None
+        return config.ARM_OFFBOARD_TOLERANCE_DEG
+
+    def _run_step(self, step: ArmStep, following: Optional[ArmStep] = None) -> None:
         if step.action == "move":
             angles = self._table.get(step.target).position
+            tolerance = self.step_tolerance(step, following)
             try:
-                self._backend.move_to(angles.shoulder, angles.elbow)
+                if tolerance is None:
+                    self._backend.move_to(angles.shoulder, angles.elbow)
+                else:
+                    self._backend.move_to(angles.shoulder, angles.elbow,
+                                          tolerance=tolerance)
             except ArmRejectedError as exc:
                 # Retirarse a reposo es el ULTIMO paso: la pieza ya esta en su
                 # casilla. Si la placa no consigue dejarlo fino ahi (y el

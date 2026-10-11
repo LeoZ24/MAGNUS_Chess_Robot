@@ -120,7 +120,7 @@ def test_cyberpi_backend_failure_marks_error(tmp_path):
     _complete_table(path)
 
     class Exploding(FakeArmBackend):
-        def move_to(self, shoulder, elbow):
+        def move_to(self, shoulder, elbow, tolerance=None):
             raise ArmBackendError("motor atascado")
 
     sup = ArmSupervisor(mode="cyberpi", positions_path=str(path),
@@ -256,3 +256,80 @@ def test_configure_can_change_auto_home_without_changing_mode():
     assert sup.auto_home is False
     assert sup.snapshot()["auto_home"] is False
     sup.shutdown()
+
+
+# --------------------------------------------------------------------------- #
+# La pantalla sigue al brazo pieza a pieza (sin esperar a la cámara)
+# --------------------------------------------------------------------------- #
+
+from magnus.app.arm_bridge import placement_during, release_index  # noqa: E402
+from magnus.arm.arm_node import ArmNode  # noqa: E402
+from magnus.arm.positions_table import make_fake_table  # noqa: E402
+from magnus.vision.game_state import board_placement  # noqa: E402
+
+
+def _plan(resp):
+    return ArmNode(backend=FakeArmBackend(), table=make_fake_table()).plan(resp)
+
+
+def _after(fen, uci):
+    board = chess.Board(fen) if fen else chess.Board()
+    board.push(chess.Move.from_uci(uci))
+    return board_placement(board)
+
+
+def _frames(fen, resp):
+    """Placement que se ve tras cada paso del plan (de 0 a todos)."""
+    start = board_placement(chess.Board(fen) if fen else chess.Board())
+    plan = _plan(resp)
+    return [placement_during(start, plan, done, resp) for done in range(len(plan) + 1)]
+
+
+def test_simple_move_appears_when_the_piece_is_released():
+    resp = _resp("e2e4")
+    plan = _plan(resp)
+    frames = _frames(None, resp)
+    released = release_index(plan)
+    assert plan[released].action == "grip_off"
+    start = board_placement(chess.Board())
+    # Levantada, la pieza sigue en su casilla; al soltarla ya está en la nueva.
+    assert all(frame == start for frame in frames[:released + 1])
+    assert frames[released + 1] == _after(None, "e2e4")
+    assert frames[-1] == _after(None, "e2e4")      # la retirada no cambia nada
+
+
+def test_capture_first_clears_the_captured_piece():
+    fen = "rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2"
+    resp = _resp("e4d5", fen)
+    frames = _frames(fen, resp)
+    seen = [f for i, f in enumerate(frames) if i == 0 or f != frames[i - 1]]
+    assert len(seen) == 3                    # inicio -> sin peón negro -> jugada
+    assert "d5" not in seen[1] and seen[1]["e4"] == "P"
+    assert seen[2] == _after(fen, "e4d5")
+
+
+def test_en_passant_removes_the_pawn_beside_the_destination():
+    fen = "rnbqkbnr/ppp1p1pp/8/3pPp2/8/8/PPPP1PPP/RNBQKBNR w KQkq f6 0 3"
+    resp = _resp("e5f6", fen)
+    resp.captured_square = "f5"              # al paso: no es to_square
+    assert _frames(fen, resp)[-1] == _after(fen, "e5f6")
+
+
+def test_castling_moves_king_then_rook():
+    fen = "r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4"
+    resp = _resp("e1g1", fen)
+    resp.is_castling, resp.rook_from, resp.rook_to = True, "h1", "f1"   # como el engine
+    frames = _frames(fen, resp)
+    seen = [f for i, f in enumerate(frames) if i == 0 or f != frames[i - 1]]
+    assert len(seen) == 3
+    assert seen[1]["g1"] == "K" and seen[1]["h1"] == "R"
+    assert seen[2] == _after(fen, "e1g1")
+
+
+def test_promotion_brings_the_new_piece_from_the_exchange_zone():
+    fen = "8/4P3/8/8/8/8/k7/4K3 w - - 0 1"
+    resp = _resp("e7e8q", fen)
+    assert _frames(fen, resp)[-1] == _after(fen, "e7e8q")
+    black = "4k3/8/8/8/8/8/4p3/K7 b - - 0 1"
+    resp = _resp("e2e1n", black)
+    assert _frames(black, resp)[-1] == _after(black, "e2e1n")

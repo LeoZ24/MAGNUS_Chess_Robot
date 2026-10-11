@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import socket
 from abc import ABC, abstractmethod
+from typing import Optional
 
 logger = logging.getLogger("magnus.arm.backend")
 
@@ -66,11 +67,16 @@ class ArmBackend(ABC):
         """Cierra la conexión y libera recursos."""
 
     @abstractmethod
-    def move_to(self, shoulder: float, elbow: float) -> None:
+    def move_to(self, shoulder: float, elbow: float,
+                tolerance: Optional[float] = None) -> None:
         """Mueve las articulaciones a los valores dados (de la tabla, sin IK).
 
         Las unidades (grados o pasos de encoder) son las mismas en las que se
         grabó la tabla de posiciones — el backend no las interpreta.
+
+        ``tolerance`` relaja la precisión (error aceptable, mismas unidades)
+        para poses en las que no hace falta llegar fino, como las de fuera del
+        tablero.  ``None`` = la precisión normal del backend.
         """
 
     @abstractmethod
@@ -117,6 +123,9 @@ class FakeArmBackend(ArmBackend):
 
     def __init__(self):
         self.commands: list[tuple] = []
+        # Tolerancia pedida en cada move_to, en el mismo orden (aparte para no
+        # cambiar la forma de las tuplas de ``commands``).
+        self.move_tolerances: list[Optional[float]] = []
         self.connected = False
 
     def connect(self) -> None:
@@ -129,10 +138,12 @@ class FakeArmBackend(ArmBackend):
         self.commands.append(("disconnect",))
         logger.debug("FakeArmBackend desconectado.")
 
-    def move_to(self, shoulder: float, elbow: float) -> None:
+    def move_to(self, shoulder: float, elbow: float,
+                tolerance: Optional[float] = None) -> None:
         if not self.connected:
             raise ArmBackendError("Backend no conectado (llama a connect()).")
         self.commands.append(("move_to", shoulder, elbow))
+        self.move_tolerances.append(tolerance)
 
     def set_gripper(self, engaged: bool) -> None:
         if not self.connected:
@@ -147,6 +158,7 @@ class FakeArmBackend(ArmBackend):
     def clear(self) -> None:
         """Limpia el registro de comandos (útil entre casos de test)."""
         self.commands.clear()
+        self.move_tolerances.clear()
 
 
 class CyberPiBackend(ArmBackend):
@@ -211,6 +223,9 @@ class CyberPiBackend(ArmBackend):
         self._conn: socket.socket | None = None
         self._rx_buffer: bytes = b""
         self._last_reached: tuple[float, float] | None = None
+        # Pasa a False si la placa lleva un cliente que no entiende la
+        # tolerancia en MOVE (versión antigua): se deja de mandar.
+        self._loose_moves = True
 
     # ------------------------------------------------------------------ #
     # Descubrir la IP local (solo para mostrarla en el log)
@@ -327,10 +342,31 @@ class CyberPiBackend(ArmBackend):
     # ------------------------------------------------------------------ #
     # Interfaz ArmBackend
     # ------------------------------------------------------------------ #
-    def move_to(self, shoulder: float, elbow: float) -> None:
+    def move_to(self, shoulder: float, elbow: float,
+                tolerance: Optional[float] = None) -> None:
         # Formato con 2 decimales: suficiente para grados de motor, evita
         # notación científica que confundiría al parser del cliente.
         text = f"MOVE {shoulder:.2f} {elbow:.2f}"
+        if tolerance is not None and self._loose_moves:
+            try:
+                self._move(f"{text} {tolerance:.2f}", shoulder, elbow,
+                           warn_deg=max(MOVE_WARN_DEG, tolerance))
+                return
+            except ArmRejectedError as e:
+                # Un cliente antiguo solo entiende "MOVE <hombro> <codo>": se
+                # sigue con la precisión normal (más lento, igual de bueno).
+                if "argumentos" not in str(e):
+                    raise
+                self._loose_moves = False
+                logger.warning(
+                    "El cliente de la CyberPi no admite tolerancia en MOVE: "
+                    "sube la versión nueva de examples/cyberpi_arm_client.py "
+                    "para que las poses fuera del tablero vayan más rápido."
+                )
+        self._move(text, shoulder, elbow)
+
+    def _move(self, text: str, shoulder: float, elbow: float,
+              warn_deg: float = MOVE_WARN_DEG) -> None:
         # Un ERR de la placa ("codo no mantuvo", "no alcanzo") no deja el brazo
         # perdido: el encoder sigue contando desde el cero de HOME y el MOVE es
         # absoluto, así que repetirlo lo lleva al mismo sitio.  Solo se repiten
@@ -342,7 +378,8 @@ class CyberPiBackend(ArmBackend):
                 resp = self._command(text)
                 break
             except ArmRejectedError as e:
-                if attempt >= self.move_retries:
+                # Un MOVE mal formado no mejora repitiéndolo.
+                if attempt >= self.move_retries or "argumentos" in str(e):
                     raise
                 attempt += 1
                 logger.warning(
@@ -360,7 +397,7 @@ class CyberPiBackend(ArmBackend):
         if self._last_reached is not None:
             got_sh, got_el = self._last_reached
             err_sh, err_el = shoulder - got_sh, elbow - got_el
-            if abs(err_sh) > MOVE_WARN_DEG or abs(err_el) > MOVE_WARN_DEG:
+            if abs(err_sh) > warn_deg or abs(err_el) > warn_deg:
                 logger.warning(
                     "El brazo se quedó corto: pedido (%.2f, %.2f), logrado "
                     "(%.2f, %.2f), error (%.2f, %.2f).",

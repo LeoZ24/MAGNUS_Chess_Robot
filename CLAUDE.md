@@ -291,6 +291,15 @@ solo hacia ese lado (base inclinada, cable tirando, contrapeso).
 Los ángulos realmente alcanzados vuelven en `ACK MOVE <hombro> <codo>`, leídos
 al final de verdad y no antes de mover el otro eje.
 
+**Fuera del tablero no se afina.** `MOVE <hombro> <codo> <tol>` (tercer
+argumento opcional) relaja la precisión de ese movimiento: sin compensación de
+juego, sin impulsos si ya está dentro de `tol`, y los umbrales de repaso y de
+fallo se corren lo mismo. `ArmNode.step_tolerance()` lo pide
+(`config.ARM_OFFBOARD_TOLERANCE_DEG`, 3°) para `discard`/`park` y para
+`exchange` **salvo que vaya a recoger** (para agarrar, el imán tiene que caer
+encima). Con un cliente antiguo (`ERR MOVE requiere 2 argumentos`) el host lo
+repite sin tolerancia y deja de mandarla.
+
 Si aun así se queda corto: batería del shield baja (los motores **no** se
 alimentan del USB) es la causa número uno; después, cables o topes tirando del
 brazo. Las perillas a tocar son `CREEP_POWER_MAX` y `MOVE_SPEED_MAX_RPM`.
@@ -501,6 +510,14 @@ Reglas del paquete:
   el selector «Automático / Con botón» del panel del brazo lo cambia. Una
   PARADA o un fallo **no apagan** el modo: solo esa jugada queda en pausa
   (`_arm_held_uci`) esperando «Ejecutar»; la siguiente vuelve a ser automática
+- ✅ **La jugada del brazo cuenta al soltar la última pieza**, sin esperar a la
+  cámara (que el propio brazo tapa): `_arm_progress_logic()` la apunta con
+  `GameSession.apply_robot_move()` en cuanto el brazo pasa de `release_index()`,
+  y mientras tanto la pantalla sigue al brazo pieza a pieza con
+  `placement_during()`. Solo con el brazo real o el mundo sintético: el brazo
+  simulado con cámara real no mueve nada y sigue esperando a la cámara. Si la
+  pieza no quedó bien, la red de seguridad es `_board_ready_for_arm()`: el
+  brazo no vuelve a arrancar hasta que la cámara ve el tablero como debe estar
 
 ### 🔶 `magnus/arm/` — IMPLEMENTADO EN SOFTWARE; bloqueado por hardware
 

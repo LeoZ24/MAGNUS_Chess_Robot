@@ -18,7 +18,8 @@
 #   HOME                            ACK HOME <hombro> <codo>
 #   ZERO                            ACK ZERO       (pose actual = 0,0)
 #   LIMITS                          ACK LIMITS <sh_lo> <sh_hi> <el_lo> <el_hi>
-#   MOVE <hombro> <codo>            ACK MOVE <hombro> <codo>  (logrados)
+#   MOVE <hombro> <codo> [tol]      ACK MOVE <hombro> <codo>  (logrados)
+#                                   tol: error aceptable (fuera del tablero)
 #   GRIPPER <0|1>                   ACK GRIPPER    (1=agarra y LEVANTA, 0=suelta)
 #   GET                             ACK POS <hombro> <codo>
 #   STOP                            ACK STOP
@@ -368,6 +369,15 @@ def _log(text):
 _deadline = 0.0
 
 
+# Error aceptado en el MOVE en curso. El host lo sube (cuarto argumento de
+# MOVE) para las poses de FUERA del tablero (descarte, reposo): ahi no hace
+# falta precision y afinar los ultimos grados era lo que mas tardaba. _slack
+# es lo que se relaja sobre lo normal; con el se corren tambien los umbrales de
+# repaso y de fallo. Se restablecen en handle() al acabar cada MOVE.
+_tol = TOLERANCE_DEG
+_slack = 0.0
+
+
 def _out_of_time():
     return _deadline > 0 and time.time() > _deadline
 
@@ -398,7 +408,7 @@ def _drive_turns(target, port, current, name):
     speed = MOVE_SPEED_RPM
     for _ in range(MOVE_MAX_PASSES):
         delta = target - current
-        if abs(delta) <= TOLERANCE_DEG or _out_of_time():
+        if abs(delta) <= _tol or _out_of_time():
             break
         # EM_turn directo y no via _hw_turn: es el punto MAS PROFUNDO de un
         # MOVE (EM_turn anida bastante por dentro) y cada funcion de menos es
@@ -438,7 +448,7 @@ def _creep_to(target, port, name):
     try:
         for _ in range(CREEP_MAX_PULSES):
             error = target - current
-            if abs(error) <= TOLERANCE_DEG or _out_of_time():
+            if abs(error) <= _tol or _out_of_time():
                 break
             sign = 1 if error > 0 else -1
             if last_sign != 0 and sign != last_sign:
@@ -522,27 +532,28 @@ def _move_axis(target, port, lim, name, approach=True):
     # seguiria del lado malo y la compensacion no serviria de nada.
     approach_sign = (SHOULDER_APPROACH_SIGN if port == SHOULDER_PORT
                      else ELBOW_APPROACH_SIGN)
-    if (approach and BACKLASH_DEG > 0
-            and (target - start) * approach_sign < -TOLERANCE_DEG):
+    # Sin precision (fuera del tablero) el juego da igual: no se compensa.
+    if (approach and BACKLASH_DEG > 0 and _slack <= 0
+            and (target - start) * approach_sign < -_tol):
         pre = max(lim[0], min(lim[1], target - approach_sign * BACKLASH_DEG))
         _drive_turns(pre, port, start, name)
 
     current = _hw_get_angle(port)
-    if port == SHOULDER_PORT and abs(target - current) > TOLERANCE_DEG:
+    if port == SHOULDER_PORT and abs(target - current) > _tol:
         _assist(1 if target > current else -1)
     try:
         current = _drive_turns(target, port, current, name)
     finally:
         if port == SHOULDER_PORT:
             _assist(0)      # que un fallo no deje el geekservo empujando
-    if abs(target - current) > TOLERANCE_DEG:
+    if abs(target - current) > _tol:
         current = _creep_to(target, port, name)
 
     error = target - current
     if VERBOSE:
         _log("  " + name + " " + str(start) + "->" + str(current)
              + " obj " + str(target) + " err " + str(round(error, 2)))
-    if abs(error) > MOVE_FAIL_DEG:
+    if abs(error) > MOVE_FAIL_DEG + _slack:
         raise ValueError(
             name + " no alcanzo " + str(target) + " (quedo en " + str(current)
             + "). Bateria baja, potencia insuficiente o tope mecanico?")
@@ -588,7 +599,7 @@ def _move_all(shoulder, elbow):
         time.sleep(MOVE_SETTLE_S)
         sagged = False
         for target, port, lim, name in order:
-            if abs(target - _hw_get_angle(port)) > MOVE_SAG_DEG:
+            if abs(target - _hw_get_angle(port)) > MOVE_SAG_DEG + _slack:
                 sagged = True
                 _log("  " + name + " cedio, repaso")
                 try:
@@ -603,7 +614,7 @@ def _move_all(shoulder, elbow):
     got_el = _hw_get_angle(ELBOW_PORT)
     for name, target, current in (("hombro", shoulder, got_sh),
                                   ("codo", elbow, got_el)):
-        if abs(target - current) > MOVE_FAIL_DEG:
+        if abs(target - current) > MOVE_FAIL_DEG + _slack:
             raise ValueError(name + " no mantuvo " + str(target)
                              + " (quedo en " + str(current)
                              + "). Revisa retencion, bateria y carga del brazo.")
@@ -726,15 +737,21 @@ def handle(line):
         return "ACK ZERO"
 
     if cmd == "MOVE":
-        if len(parts) != 3:
-            return "ERR MOVE requiere 2 argumentos"
+        if len(parts) not in (3, 4):
+            return "ERR MOVE requiere 2 o 3 argumentos"
         sh = float(parts[1])
         el = float(parts[2])
-        global _deadline
+        global _deadline, _tol, _slack
+        if len(parts) == 4:
+            # Nunca MAS exigente que lo normal: solo se puede relajar.
+            _tol = max(TOLERANCE_DEG, float(parts[3]))
+            _slack = _tol - TOLERANCE_DEG
         try:
             got_sh, got_el = _move_all(sh, el)
         finally:
             _deadline = 0.0         # fuera de un MOVE no hay limite de tiempo
+            _tol = TOLERANCE_DEG    # el siguiente MOVE vuelve a ir fino
+            _slack = 0.0
         return "ACK MOVE " + str(got_sh) + " " + str(got_el)
 
     if cmd == "GRIPPER":

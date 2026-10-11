@@ -47,6 +47,15 @@ ZONE_EXCHANGE: str = "exchange"         # zona de intercambio para promociones
 # que esto existiera sigue siendo válida para jugar, solo que sin retirada.
 ZONE_PARK: str = "park"
 
+# Fuera del tablero no hace falta precisión: soltar una pieza en el descarte o
+# retirarse a reposo con un par de grados de desvío no molesta a nadie, y
+# afinar esos últimos grados (impulsos, compensación de juego, repasos) era lo
+# que más tiempo se comía.  Error (grados de motor) que se acepta en esas
+# poses.  OJO: no se aplica si el brazo va ahí a RECOGER una pieza (p. ej. la
+# dama de la zona de intercambio): para agarrar, el imán tiene que caer encima.
+ARM_OFFBOARD_ZONES: tuple[str, ...] = (ZONE_DISCARD, ZONE_EXCHANGE, ZONE_PARK)
+ARM_OFFBOARD_TOLERANCE_DEG: float = 3.0
+
 # --------------------------------------------------------------------------- #
 # ArUco — un mismo diccionario, tres roles con rangos de ID separados
 # --------------------------------------------------------------------------- #

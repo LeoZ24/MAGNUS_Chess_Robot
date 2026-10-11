@@ -296,9 +296,11 @@
     switch (s.sub) {
       case "human_turn": {
         const last = s.history.length ? s.history[s.history.length - 1] : null;
-        return setBanner({ kicker: "TU TURNO", title: "Mueve una pieza", cls: "human",
-          detail: last && s.history.length % 2 === (s.robot_side === "white" ? 1 : 0)
-            ? `MAGNUS jugó ${last}` : (s.history.length ? "" : "Empiezas tú") });
+        let detail = last && s.history.length % 2 === (s.robot_side === "white" ? 1 : 0)
+          ? `MAGNUS jugó ${last}` : (s.history.length ? "" : "Empiezas tú");
+        // La jugada cuenta al soltar la pieza: el brazo aún puede estar saliendo.
+        if (arm.status === "busy") detail = (detail ? detail + " · " : "") + "el brazo se está retirando";
+        return setBanner({ kicker: "TU TURNO", title: "Mueve una pieza", cls: "human", detail });
       }
       case "robot_thinking":
         return setBanner({ kicker: "MAGNUS", cls: "robot",
@@ -446,7 +448,10 @@
     const planned = s.board.planned || {};
     let steps, mode;                       // mode: "busy" | "result" | "preview"
     if (a.status === "busy") { steps = a.steps; mode = "busy"; }
-    else if (a.last_outcome && a.last_uci && a.last_uci === planned.uci) { steps = a.steps; mode = "result"; }
+    else if (a.last_outcome && a.last_uci
+             && (a.last_uci === planned.uci || (!s.board.planned && a.last_uci === s.board.last_move))) {
+      steps = a.steps; mode = "result";   // la jugada ya cuenta: se ve cómo acabó
+    }
     else { steps = a.preview || []; mode = "preview"; }
     const list = $("arm-steps");
     const key = steps.join("|") + "#" + a.step_index + "#" + mode + "#" + a.last_outcome;

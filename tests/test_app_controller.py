@@ -87,8 +87,9 @@ def test_full_synthetic_game_with_simulated_arm(controller):
     assert spoken and any("Muevo" in t or "muevo" in t for t in spoken)
 
 
-def test_calibrated_arm_executes_once_and_waits_for_camera():
-    """Sin garra, completar el recorrido no inventa que la pieza se movió."""
+def test_real_arm_move_counts_once_the_piece_is_released():
+    """Con el brazo real la jugada se da por hecha al soltar la pieza, sin
+    esperar a que la cámara la confirme (el brazo se la tapa al trabajar)."""
     path = str(Path(__file__).resolve().parents[1] / "magnus/arm/positions.json")
     settings = AppSettings(robot_side="white", arm_mode="cyberpi",
                            arm_auto_execute=True, positions_path=path)
@@ -104,9 +105,9 @@ def test_calibrated_arm_executes_once_and_waits_for_camera():
         assert _wait_engine(ctrl)
         _run(ctrl, 20)
         ctrl.command("start_game")
-        assert _run(ctrl, 500, until=lambda s: s["sub"] == "awaiting_robot_board", sleep=0.001)
+        assert _run(ctrl, 500, until=lambda s: s["board"]["planned"] is not None, sleep=0.001)
         planned = ctrl.session.planned
-        assert planned is not None
+        assert _run(ctrl, 500, until=lambda s: len(s["history"]) == 1, sleep=0.001)
         table = PositionsTable.load(path)
         source = table.get(planned.from_square).position
         dest = table.get(planned.to_square).position
@@ -119,15 +120,16 @@ def test_calibrated_arm_executes_once_and_waits_for_camera():
             park = table.get(config.ZONE_PARK).position
             expected.append(("move_to", park.shoulder, park.elbow))
         assert backend.commands == expected
-        _run(ctrl, 30)
-        assert len(backend.commands) == len(expected)
-        assert ctrl.session.history_san == []
-        ctrl.voice.say_your_turn.assert_not_called()
-        assert camera.push(planned.uci)  # El usuario mueve la pieza tras el recorrido.
-        assert _run(ctrl, 150, until=lambda s: len(s["history"]) == 1)
+        _run(ctrl, 5)
+        assert len(backend.commands) == len(expected)      # una sola vez
+        assert ctrl.session.history_san == [planned.san]    # sin que la cámara lo vea
         assert ctrl.snapshot()["sub"] == "human_turn"
         ctrl.voice.say_your_turn.assert_called_once()
         assert ctrl._arm_done_uci is None  # Se puede volver a jugar esa UCI más adelante.
+        # Cuando la cámara ve por fin la pieza colocada, no cuenta otra jugada.
+        assert camera.push(planned.uci)
+        _run(ctrl, 30)
+        assert ctrl.session.history_san == [planned.san]
     finally:
         ctrl.shutdown()
 
@@ -351,3 +353,61 @@ def test_set_arm_persists_auto_home(tmp_path):
         assert json.loads(path.read_text(encoding="utf-8"))["arm_auto_home"] is False
     finally:
         ctrl.shutdown()
+
+
+# --------------------------------------------------------------------------- #
+# La jugada del brazo se da por hecha al soltar la pieza (sin la cámara)
+# --------------------------------------------------------------------------- #
+
+from magnus.app.arm_bridge import release_index  # noqa: E402
+
+
+def _pending_move(controller):
+    """Partida empezada y jugada del robot esperando el botón."""
+    assert _wait_engine(controller)
+    controller.command("start_game")
+    controller.settings = controller.settings.update(arm_auto_execute=False)
+    assert _run(controller, 1000, until=lambda s: s["arm"]["pending"], sleep=0.001)
+    planned = controller.session.planned
+    return planned, controller.arm._planner.plan(planned)
+
+
+def test_screen_follows_the_arm_before_the_move_counts(controller):
+    planned, plan = _pending_move(controller)
+    before = list(controller.session.history_san)
+    progress = (planned.uci, plan, release_index(plan) + 1)
+    with patch.object(controller.arm, "progress", return_value=progress):
+        controller._publish_snapshot()
+    snap = controller.snapshot()
+    assert snap["board"]["placement"][planned.to_square]
+    assert planned.from_square not in snap["board"]["placement"]
+    assert snap["history"] == before
+
+
+def test_move_counts_as_soon_as_the_piece_is_released(controller):
+    planned, plan = _pending_move(controller)
+    before = list(controller.session.history_san)
+    fen_before = controller.session.tracker.fen()
+    with patch.object(controller.arm, "progress",
+                      return_value=(planned.uci, plan, release_index(plan))):
+        controller._arm_progress_logic()
+    assert controller.session.history_san == before  # aún lleva la pieza
+    with patch.object(controller.arm, "progress",
+                      return_value=(planned.uci, plan, release_index(plan) + 1)):
+        controller._arm_progress_logic()
+        controller._arm_progress_logic()             # no se apunta dos veces
+    assert controller.session.history_san == before + [planned.san]
+    assert controller.synth.board.fen() == controller.session.tracker.fen()
+    # Que falle la retirada después no la deshace ni deja nada pendiente.
+    controller._cmd__arm_finished(planned.uci, False, "ERR al retirarse", fen_before)
+    assert controller.session.history_san == before + [planned.san]
+    assert controller._arm_held_uci is None
+    assert not controller._arm_pending
+
+
+def test_simulated_arm_with_a_real_camera_still_waits_for_it(controller):
+    """El brazo simulado no mueve nada: con cámara real, la pieza la pone el
+    humano y la jugada la confirma la cámara, como siempre."""
+    assert controller._arm_assumes_success()
+    controller.synth = None
+    assert not controller._arm_assumes_success()

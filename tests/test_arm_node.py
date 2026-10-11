@@ -218,7 +218,7 @@ class _RejectingBackend(FakeArmBackend):
         super().__init__()
         self._reject = reject
 
-    def move_to(self, shoulder, elbow):
+    def move_to(self, shoulder, elbow, tolerance=None):
         super().move_to(shoulder, elbow)
         if (shoulder, elbow) in self._reject:
             raise ArmRejectedError("ERR codo no mantuvo (simulado)")
@@ -250,3 +250,33 @@ def test_a_rejected_square_still_aborts():
     with pytest.raises(ArmRejectedError):
         arm.execute(resp)
     assert ("gripper", True) not in backend.commands
+
+
+# --------------------------------------------------------------------------- #
+# Fuera del tablero no hace falta precisión (salvo para recoger una pieza)
+# --------------------------------------------------------------------------- #
+
+def _targets_and_tolerances(resp):
+    backend = FakeArmBackend()
+    with ArmNode(backend=backend, table=make_fake_table()) as arm:
+        plan = arm.execute(resp)
+    targets = [s.target for s in plan if s.action == "move"]
+    return list(zip(targets, backend.move_tolerances))
+
+
+def test_discard_and_park_are_loose_squares_are_precise():
+    resp = MoveResponse(uci="e4d5", from_square="e4", to_square="d5",
+                        is_capture=True, captured_square="d5")
+    loose = config.ARM_OFFBOARD_TOLERANCE_DEG
+    assert _targets_and_tolerances(resp) == [
+        ("d5", None), (config.ZONE_DISCARD, loose),
+        ("e4", None), ("d5", None),
+        (config.ZONE_PARK, loose),
+    ]
+
+
+def test_picking_up_from_the_exchange_zone_stays_precise():
+    resp = MoveResponse(uci="e7e8q", from_square="e7", to_square="e8", promotion="q")
+    tolerances = dict(_targets_and_tolerances(resp))
+    assert tolerances[config.ZONE_EXCHANGE] is None
+    assert tolerances[config.ZONE_DISCARD] == config.ARM_OFFBOARD_TOLERANCE_DEG
