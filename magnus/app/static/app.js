@@ -512,7 +512,7 @@
       const card = el("button", "diff-card");
       card.dataset.level = d.name;
       card.innerHTML = `<div class="diff-name">${d.name}</div><div class="diff-elo">${d.elo ? "≈ " + d.elo + " Elo" : "sin límite"}</div>` +
-        `<div class="diff-desc">${d.description}</div><div class="diff-bar">${[1, 2, 3, 4, 5, 6].map((i) => `<i class="${i <= d.value ? "on" : ""}"></i>`).join("")}</div>`;
+        `<div class="diff-desc">${d.description}</div><div class="diff-bar">${cat.map((_, i) => `<i class="${i < d.value ? "on" : ""}"></i>`).join("")}</div>`;
       card.onclick = () => command("set_difficulty", { level: d.name });
       grid.appendChild(card);
     }

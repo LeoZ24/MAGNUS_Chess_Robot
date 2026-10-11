@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import os
+import random
 import shutil
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -33,6 +34,27 @@ _COMMON_ENGINE_PATHS = (
     "/usr/bin/stockfish",
     "/opt/homebrew/bin/stockfish",
 )
+
+# Valor en centipeones con que se cuenta un mate al comparar candidatas.
+_MATE_SCORE_CP = 100_000
+
+
+def pick_candidate(scores_cp: list[int], config: EngineConfig,
+                   rng: random.Random) -> int:
+    """Elige el índice de la jugada a jugar entre candidatas ordenadas.
+
+    ``scores_cp`` va de mejor a peor (como el ``multipv`` del motor), desde el
+    punto de vista del que mueve.  Con probabilidad ``config.mistake_chance``
+    se elige al azar una candidata **peor** que la mejor, siempre que no pierda
+    más de ``config.max_loss_cp``; si no hay ninguna así, se juega la mejor.
+    Función pura: se prueba sin motor.
+    """
+    if len(scores_cp) < 2 or rng.random() >= config.mistake_chance:
+        return 0
+    best = scores_cp[0]
+    worse = [i for i, cp in enumerate(scores_cp[1:], start=1)
+             if config.max_loss_cp is None or best - cp <= config.max_loss_cp]
+    return rng.choice(worse) if worse else 0
 
 
 def find_engine_binary(explicit: Optional[str] = None) -> str:
@@ -99,6 +121,30 @@ class EngineBackend(ABC):
     def select_move(self, board: chess.Board, config: EngineConfig) -> EnginePlayResult:
         """Elige la mejor jugada para ``board`` según ``config``."""
 
+    def _select_with_mistakes(self, engine: chess.engine.SimpleEngine,
+                              board: chess.Board, limit: chess.engine.Limit,
+                              config: EngineConfig) -> EnginePlayResult:
+        """Pide varias candidatas y a veces juega una peor (niveles bajos)."""
+        infos = engine.analyse(board, limit, multipv=config.multipv)
+        lines = [i for i in infos if i.get("pv") and i.get("score") is not None]
+        if not lines:
+            raise chess.engine.EngineError("El motor no devolvió ninguna jugada.")
+
+        scores = [i["score"].pov(board.turn).score(mate_score=_MATE_SCORE_CP)
+                  for i in lines]
+        chosen = lines[pick_candidate(scores, config, self._rng)]
+        if chosen is not lines[0]:
+            logger.debug("Error a propósito (%s): %s en vez de %s.", config.name,
+                         chosen["pv"][0].uci(), lines[0]["pv"][0].uci())
+
+        pov = chosen["score"].pov(board.turn)
+        return EnginePlayResult(
+            move=chosen["pv"][0],
+            evaluation_cp=pov.score(),
+            mate_in=pov.mate(),
+            depth=chosen.get("depth"),
+        )
+
     def analyse(self, board: chess.Board, config: EngineConfig) -> EngineAnalysis:
         """Evalúa una posición sin comprometerse a jugar.
 
@@ -131,9 +177,11 @@ class EngineBackend(ABC):
 class UCIEngineBackend(EngineBackend):
     """Backend para cualquier motor que hable el protocolo UCI (Stockfish, ...)."""
 
-    def __init__(self, engine_path: Optional[str] = None):
+    def __init__(self, engine_path: Optional[str] = None,
+                 rng: Optional[random.Random] = None):
         self.engine_path = find_engine_binary(engine_path)
         self._engine: Optional[chess.engine.SimpleEngine] = None
+        self._rng = rng or random.Random()
         # Recuerda las opciones ya aplicadas para no reconfigurar en cada jugada.
         self._applied: dict = {}
 
@@ -190,6 +238,9 @@ class UCIEngineBackend(EngineBackend):
         engine = self._ensure_started()
         self._apply_options(engine, config)
         limit = self._build_limit(config)
+
+        if config.multipv > 1 and config.mistake_chance > 0:
+            return self._select_with_mistakes(engine, board, limit, config)
 
         result = engine.play(board, limit, info=chess.engine.INFO_SCORE)
         if result.move is None:

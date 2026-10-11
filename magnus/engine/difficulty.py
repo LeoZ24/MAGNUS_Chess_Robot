@@ -11,6 +11,12 @@ Mapeo a opciones de Stockfish (y la mayoría de motores UCI):
     * ``limit_strength``  -> opción ``UCI_LimitStrength`` (bool)
     * ``elo``             -> opción ``UCI_Elo`` (Elo objetivo aproximado)
     * ``depth`` / ``movetime`` / ``nodes`` -> límite de búsqueda
+
+Stockfish no baja de ~1320 de Elo con ``UCI_Elo``.  Los niveles por debajo de
+eso (``LEARNER`` .. ``AMATEUR``) se debilitan **por software**: el backend pide
+varias jugadas candidatas (``multipv``) y, con probabilidad ``mistake_chance``,
+elige una peor que la mejor (sin perder más de ``max_loss_cp``).  En esos
+niveles ``elo`` es solo una etiqueta aproximada para la interfaz.
 """
 
 from __future__ import annotations
@@ -21,14 +27,18 @@ from typing import Optional, Union
 
 
 class DifficultyLevel(IntEnum):
-    """Escala de dificultad, de más fácil (1) a máxima fuerza (6)."""
+    """Escala de dificultad, de más fácil (1) a máxima fuerza (10)."""
 
-    BEGINNER = 1   # principiante: juega casi al azar, muy poco cálculo
-    EASY = 2       # fácil
-    MEDIUM = 3     # intermedio (por defecto)
-    HARD = 4       # difícil
-    EXPERT = 5     # experto
-    MAXIMUM = 6    # fuerza máxima del motor (sin limitar)
+    LEARNER = 1    # acaba de aprender a mover las piezas (errores a propósito)
+    NOVICE = 2     # novato (errores a propósito)
+    CASUAL = 3     # jugador ocasional (errores a propósito)
+    AMATEUR = 4    # aficionado (errores a propósito)
+    BEGINNER = 5   # el mínimo de Stockfish (~1350)
+    EASY = 6       # fácil
+    MEDIUM = 7     # intermedio (por defecto)
+    HARD = 8       # difícil
+    EXPERT = 9     # experto
+    MAXIMUM = 10   # fuerza máxima del motor (sin limitar)
 
     @classmethod
     def parse(cls, value: Union[str, int, "DifficultyLevel"]) -> "DifficultyLevel":
@@ -61,7 +71,11 @@ class EngineConfig:
     # Fuerza de juego
     skill_level: Optional[int] = None      # 0-20 (Skill Level de Stockfish)
     limit_strength: bool = False           # activa UCI_LimitStrength
-    elo: Optional[int] = None              # UCI_Elo objetivo
+    elo: Optional[int] = None              # UCI_Elo objetivo (o etiqueta)
+    # Errores a propósito (niveles por debajo del mínimo de Stockfish)
+    multipv: int = 1                       # jugadas candidatas a pedir
+    mistake_chance: float = 0.0            # prob. de no elegir la mejor
+    max_loss_cp: Optional[int] = None      # lo peor que puede ser el error
     # Límite de búsqueda (cuánto "piensa")
     movetime: Optional[float] = None       # segundos por jugada
     depth: Optional[int] = None            # profundidad máxima
@@ -80,7 +94,27 @@ class EngineConfig:
 # Presets: del más débil al más fuerte.
 # Para los niveles bajos limitamos Skill Level / Elo y damos poco tiempo; en el
 # nivel máximo no limitamos nada y dejamos más tiempo de cálculo.
+#
+# Los cuatro primeros no limitan a Stockfish (Skill Level 20, sin UCI_Elo): lo
+# que los hace débiles son los errores a propósito, y un Stockfish limitado
+# además elegiría mal las candidatas que luego comparamos.
 DIFFICULTY_PRESETS: dict[DifficultyLevel, EngineConfig] = {
+    DifficultyLevel.LEARNER: EngineConfig(
+        name="LEARNER", skill_level=20, elo=400,
+        movetime=0.05, depth=1, multipv=12, mistake_chance=0.85, max_loss_cp=None,
+    ),
+    DifficultyLevel.NOVICE: EngineConfig(
+        name="NOVICE", skill_level=20, elo=700,
+        movetime=0.05, depth=1, multipv=10, mistake_chance=0.7, max_loss_cp=900,
+    ),
+    DifficultyLevel.CASUAL: EngineConfig(
+        name="CASUAL", skill_level=20, elo=950,
+        movetime=0.05, depth=1, multipv=8, mistake_chance=0.55, max_loss_cp=600,
+    ),
+    DifficultyLevel.AMATEUR: EngineConfig(
+        name="AMATEUR", skill_level=20, elo=1150,
+        movetime=0.05, depth=1, multipv=6, mistake_chance=0.5, max_loss_cp=450,
+    ),
     DifficultyLevel.BEGINNER: EngineConfig(
         name="BEGINNER", skill_level=0, limit_strength=True, elo=1350,
         movetime=0.05, depth=1,

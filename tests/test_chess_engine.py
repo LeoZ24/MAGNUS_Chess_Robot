@@ -6,6 +6,8 @@ al paso, promoción) sin depender de Stockfish.  Hay además un test de
 integración que usa el motor real y se omite si no está instalado.
 """
 
+import random
+
 import chess
 import pytest
 
@@ -18,9 +20,13 @@ from magnus.engine import (
     DifficultyLevel,
     GameOverError,
     InvalidPositionError,
+    DIFFICULTY_PRESETS,
+    EngineConfig,
     get_config,
 )
-from magnus.engine.backend import EngineBackend, EnginePlayResult, find_engine_binary
+from magnus.engine.backend import (
+    EngineBackend, EnginePlayResult, find_engine_binary, pick_candidate,
+)
 
 
 class FakeBackend(EngineBackend):
@@ -52,7 +58,7 @@ def make_node(move_uci: str) -> ChessEngineNode:
 def test_difficulty_parse_variants():
     assert DifficultyLevel.parse("MEDIUM") is DifficultyLevel.MEDIUM
     assert DifficultyLevel.parse("medium") is DifficultyLevel.MEDIUM
-    assert DifficultyLevel.parse(3) is DifficultyLevel.MEDIUM
+    assert DifficultyLevel.parse(7) is DifficultyLevel.MEDIUM
     assert DifficultyLevel.parse(DifficultyLevel.HARD) is DifficultyLevel.HARD
     with pytest.raises(ValueError):
         DifficultyLevel.parse("imposible")
@@ -74,6 +80,49 @@ def test_movetime_override():
 # --------------------------------------------------------------------------- #
 # Mensajes
 # --------------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- #
+# Errores a propósito (niveles por debajo del mínimo de Stockfish)
+# --------------------------------------------------------------------------- #
+def test_levels_below_stockfish_floor_are_weakened_by_software():
+    floor = DIFFICULTY_PRESETS[DifficultyLevel.BEGINNER].elo
+    for level in DifficultyLevel:
+        cfg = DIFFICULTY_PRESETS[level]
+        if level < DifficultyLevel.BEGINNER:
+            assert cfg.elo < floor
+            assert not cfg.limit_strength          # el Elo aquí es solo etiqueta
+            assert cfg.multipv > 1 and cfg.mistake_chance > 0
+        else:
+            assert cfg.mistake_chance == 0
+
+
+def test_lower_levels_make_more_mistakes():
+    weak = [DIFFICULTY_PRESETS[l] for l in DifficultyLevel if l < DifficultyLevel.BEGINNER]
+    chances = [c.mistake_chance for c in weak]
+    assert chances == sorted(chances, reverse=True)
+
+
+def test_pick_candidate_without_mistake_plays_the_best():
+    cfg = EngineConfig(multipv=4, mistake_chance=0.0)
+    assert pick_candidate([50, 20, -100, -900], cfg, random.Random(0)) == 0
+
+
+def test_pick_candidate_respects_max_loss():
+    cfg = EngineConfig(multipv=4, mistake_chance=1.0, max_loss_cp=200)
+    rng = random.Random(0)
+    picks = {pick_candidate([50, 20, -100, -900], cfg, rng) for _ in range(200)}
+    assert picks == {1, 2}                         # nunca la que pierde 950
+
+
+def test_pick_candidate_falls_back_to_best_if_every_mistake_is_too_big():
+    cfg = EngineConfig(multipv=3, mistake_chance=1.0, max_loss_cp=100)
+    assert pick_candidate([300, -500, -900], cfg, random.Random(0)) == 0
+
+
+def test_pick_candidate_with_a_single_legal_move():
+    cfg = EngineConfig(multipv=8, mistake_chance=1.0)
+    assert pick_candidate([10], cfg, random.Random(0)) == 0
+
+
 def test_position_request_roundtrip():
     req = PositionRequest(fen=STARTING_FEN, difficulty="HARD", request_id="abc")
     again = PositionRequest.from_dict(req.to_dict())

@@ -53,7 +53,11 @@ SYNTH_BLACK_LINE = ["e7e5", "b8c6", "g8f6", "e5d4", "f8e7", "e8g8"]
 
 # Descripción de cada nivel para mostrarla en la interfaz.
 DIFFICULTY_DESCRIPTIONS: dict[str, str] = {
-    "BEGINNER": "Juega casi al azar. Ideal para quien está aprendiendo.",
+    "LEARNER": "Se equivoca muchísimo. Para quien acaba de aprender a mover.",
+    "NOVICE": "Deja piezas colgando a menudo. Ideal para empezar a ganar.",
+    "CASUAL": "Se le escapan tácticas sencillas. Un rival de sobremesa.",
+    "AMATEUR": "Juega con sentido pero comete errores claros.",
+    "BEGINNER": "El mínimo de Stockfish: ya juega con cabeza.",
     "EASY": "Comete errores a menudo y calcula poco.",
     "MEDIUM": "Un club de barrio: sólido pero con fallos.",
     "HARD": "Exige concentración. Castiga los errores.",
