@@ -497,6 +497,10 @@ Reglas del paquete:
   consume en `static/app.js` (`render(s)`)
 - ✅ El brazo real se activa **sin tocar código**: `positions.json` completo +
   elegir CyberPi en Ajustes. Mantén eso así
+- ✅ El brazo ejecuta cada jugada **solo** por defecto (`arm_auto_execute`);
+  el selector «Automático / Con botón» del panel del brazo lo cambia. Una
+  PARADA o un fallo **no apagan** el modo: solo esa jugada queda en pausa
+  (`_arm_held_uci`) esperando «Ejecutar»; la siguiente vuelve a ser automática
 
 ### 🔶 `magnus/arm/` — IMPLEMENTADO EN SOFTWARE; bloqueado por hardware
 

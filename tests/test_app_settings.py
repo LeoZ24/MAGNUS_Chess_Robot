@@ -11,7 +11,7 @@ def test_defaults_are_valid():
     settings = AppSettings()
     settings.validate()
     assert settings.arm_mode == "off"
-    assert settings.arm_auto_execute is False
+    assert settings.arm_auto_execute is True
 
 
 def test_round_trip_file(tmp_path):

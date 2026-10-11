@@ -147,6 +147,9 @@ class MagnusController:
         self._frame_idx = 0
         self._last_activity = time.monotonic()
         self._arm_done_uci: Optional[str] = None
+        # Jugada que el modo automático no debe lanzar (tras una PARADA o un
+        # fallo): espera el botón. Solo esa; la siguiente vuelve a ser automática.
+        self._arm_held_uci: Optional[str] = None
         self._arm_pending = False
         self._synth_white = iter(SYNTH_WHITE_LINE)
         self._synth_black = iter(SYNTH_BLACK_LINE)
@@ -355,6 +358,7 @@ class MagnusController:
         self.in_game = True
         self.game_id += 1
         self._arm_done_uci = None
+        self._arm_held_uci = None
         self._arm_pending = False
         self._last_activity = time.monotonic()
         self.message = (f"Orientación corregida sola ({turns * 90}°)" if turns else None)
@@ -501,8 +505,11 @@ class MagnusController:
         self._arm_start(planned)
 
     def _cmd_arm_stop(self) -> None:
-        # Una parada no debe provocar otro intento automático en el siguiente frame.
-        self._save_settings(arm_auto_execute=False)
+        # Una parada no debe provocar otro intento automático en el siguiente
+        # frame: esa jugada pasa a esperar el botón (el modo no se apaga).
+        planned = self.session.planned
+        if planned is not None:
+            self._arm_held_uci = planned.uci
         if self.arm is not None:
             self.arm.stop()
             self._emit("warn", "PARADA del brazo")
@@ -535,9 +542,10 @@ class MagnusController:
                 self.synth.push(uci)
         else:
             self._emit("error", f"Brazo: {error}")
-            self._save_settings(arm_auto_execute=False)
-            # La jugada sigue pendiente: el humano puede moverla por el robot
-            # o reintentar tras arreglar el problema.
+            # La jugada sigue pendiente, pero ya no se relanza sola: el humano
+            # puede moverla por el robot o reintentar con el botón tras
+            # arreglar el problema. La siguiente jugada vuelve a ser automática.
+            self._arm_held_uci = uci
             self._arm_done_uci = None
             self._arm_pending = self.in_game
 
@@ -683,6 +691,7 @@ class MagnusController:
         session = self.session
         # La misma UCI puede repetirse más adelante (p. ej. ida/vuelta de caballo).
         self._arm_done_uci = None
+        self._arm_held_uci = None
         self._arm_pending = False
         self.message = None
         self._last_activity = time.monotonic()
@@ -751,7 +760,7 @@ class MagnusController:
         if not arm.is_ready or not self._board_ready_for_arm():
             self._arm_pending = False
             return
-        if self.settings.arm_auto_execute:
+        if self.settings.arm_auto_execute and planned.uci != self._arm_held_uci:
             self._arm_start(planned)
         else:
             self._arm_pending = True
@@ -856,6 +865,7 @@ class MagnusController:
         if arm_snapshot is not None:
             arm_snapshot["pending"] = self._arm_pending
             arm_snapshot["auto_execute"] = self.settings.arm_auto_execute
+            arm_snapshot["held"] = planned is not None and planned.uci == self._arm_held_uci
             arm_snapshot["preview"] = self.arm.preview(planned) if planned else []
         if self.synth is not None:
             camera_label = "TABLERO SIMULADO"

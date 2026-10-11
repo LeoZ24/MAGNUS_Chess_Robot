@@ -322,7 +322,8 @@
         }
         if (arm.pending) {
           return setBanner({ kicker: "MAGNUS JUEGA", title: san, cls: "robot",
-            detail: `Brazo listo · ${path}`,
+            detail: arm.held ? `Brazo en pausa tras la parada o el fallo: pulsa Ejecutar o mueve tú · ${path}`
+              : `Brazo listo · ${path}`,
             actions: [{ label: "▶ Ejecutar con el brazo", cmd: "arm_execute", pulse: true },
                       { label: "■ PARADA", cmd: "arm_stop", cls: "btn-danger" }] });
         }
@@ -466,6 +467,9 @@
     const n = steps.length;
     const done = mode === "busy" ? Math.max(0, a.step_index) : mode === "result" ? (a.last_outcome === "done" ? n : Math.max(0, a.step_index)) : 0;
     $("arm-progress-bar").style.width = n ? (100 * done / n).toFixed(0) + "%" : "0";
+    const exec = $("seg-arm-exec");
+    exec.hidden = a.mode === "off";
+    exec.querySelectorAll("button").forEach((b) => b.classList.toggle("active", (b.dataset.auto === "1") === !!a.auto_execute));
     $("btn-arm-execute").hidden = !a.pending;
     $("btn-arm-execute").classList.toggle("pulse", !!a.pending);
     $("btn-arm-stop").hidden = a.mode === "off";
@@ -685,6 +689,8 @@
     $("btn-say").onclick = () => { const t = $("in-say").value.trim(); if (t) { command("say", { text: t }); $("in-say").value = ""; } };
     $("in-say").onkeydown = (e) => { if (e.key === "Enter") $("btn-say").click(); };
     $("tg-arm-auto").onchange = (e) => command("set_arm", { auto_execute: e.target.checked });
+    document.querySelectorAll("#seg-arm-exec button").forEach((b) => b.onclick = () =>
+      command("set_arm", { auto_execute: b.dataset.auto === "1" }));
     $("tg-arm-home").onchange = (e) => command("set_arm", { auto_home: e.target.checked });
     $("btn-arm-apply").onclick = () => command("set_arm", {
       port: parseInt($("in-arm-port").value, 10) || 5555, positions_path: $("in-positions").value.trim() });

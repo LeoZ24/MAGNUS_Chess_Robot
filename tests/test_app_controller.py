@@ -145,16 +145,35 @@ def test_arm_does_not_start_from_an_unconfirmed_board(controller):
         execute.assert_not_called()
 
 
-def test_stop_disables_automatic_execution(controller):
+def test_stop_holds_only_the_current_move(controller):
+    assert _wait_engine(controller)
+    controller.command("start_game")
+    controller.settings = controller.settings.update(arm_auto_execute=False)
+    assert _run(controller, 1000, until=lambda s: s["arm"]["pending"], sleep=0.001)
+    controller.settings = controller.settings.update(arm_auto_execute=True)
     controller._cmd_arm_stop()
-    assert not controller.settings.arm_auto_execute
+    # El modo automático sigue activo, pero esa jugada ya no se lanza sola.
+    assert controller.settings.arm_auto_execute
+    with patch.object(controller.arm, "execute") as execute:
+        controller._arm_logic()
+        execute.assert_not_called()
+    controller._publish_snapshot()
+    snap = controller.snapshot()["arm"]
+    assert snap["pending"] and snap["held"] and snap["auto_execute"]
 
 
 def test_failed_arm_move_requires_manual_retry(controller):
     controller.in_game = True
     controller._cmd__arm_finished("e2e4", False, "motor atascado", controller.session.tracker.fen())
-    assert not controller.settings.arm_auto_execute
+    assert controller.settings.arm_auto_execute
+    assert controller._arm_held_uci == "e2e4"
     assert controller._arm_pending
+
+
+def test_next_robot_move_is_automatic_again_after_a_hold(controller):
+    controller._arm_held_uci = "e2e4"
+    controller._on_move_seen("e4")
+    assert controller._arm_held_uci is None
 
 
 def test_camera_does_not_confirm_a_move_while_arm_is_busy():
