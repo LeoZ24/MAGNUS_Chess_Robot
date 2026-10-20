@@ -52,7 +52,7 @@ reemplazarse sin afectar a los demás.
 | **Mensajes/Core** | `magnus/core/`        | ✅ Completo          | Contratos de datos entre nodos (PositionRequest, MoveResponse) |
 | **Engine**        | `magnus/engine/`      | ✅ Completo          | FEN → jugada con metadatos, via Stockfish UCI |
 | **Visión**        | `magnus/vision/`      | ✅ Software completo | Detección → homografía → FEN exacta (turno/enroque por inferencia); falta validar con cámara/tablero reales |
-| **Brazo robótico**| `magnus/arm/`         | 🔶 Software listo    | Secuencias pregrabadas implementadas y testeadas con backend falso; falta hardware (CyberPi + tabla de posiciones real) |
+| **Brazo robótico**| `magnus/arm/`         | 🔶 En pruebas reales | Secuencias pregrabadas + `CyberPiBackend` (TCP sobre Wi-Fi) funcionando con el brazo real y tabla `positions.json` grabada; falta afinar la precisión |
 | **Voz**           | `magnus/voice/`       | ✅ Software completo | El robot narra sus jugadas y comenta las del rival en español; falta elegir la voz definitiva de oído |
 | **App de juego**  | `magnus/app/` + `play.py` | ✅ Completo      | Une los cuatro nodos en una aplicación con panel de control web: partida en vivo, dificultad en caliente, ajustes y brazo (apagado / simulado / CyberPi) |
 
@@ -66,7 +66,7 @@ reemplazarse sin afectar a los demás.
 |---------------------------|-----------------------------------------|-----------------|
 | MacBook Air M1             | Desarrollo y procesamiento visual      | En uso          |
 | Raspberry Pi 4 o 5         | Computación embebida (producción)      | Futuro          |
-| CyberPi (placa mBot2)      | Control de motores/servos del brazo    | Pendiente integración Python |
+| CyberPi (placa mBot2)      | Control de motores/servos del brazo    | En uso (TCP sobre Wi-Fi) |
 
 ### Cámara
 
@@ -121,19 +121,35 @@ definidos formalmente en `magnus/config.py`:
 
 ### Brazo robótico — articulado, 2 grados de libertad + garra
 
-| Actuador  | Articulación   | Función                                              |
-|-----------|----------------|-------------------------------------------------------|
-| Motor 1   | Hombro         | Primer eslabón del brazo (motor Encoder mBot2)        |
-| Motor 2   | Codo           | Segundo eslabón del brazo (motor Encoder mBot2)       |
-| Servo 3   | Garra/agarre   | Agarra y suelta las piezas                            |
+| Actuador  | Articulación   | Puerto | Función                                              |
+|-----------|----------------|--------|-------------------------------------------------------|
+| Motor 1   | Hombro         | `EM1`  | Primer eslabón (motor Encoder mBot2, transmisión directa) |
+| Motor 2   | Codo           | `EM2`  | Segundo eslabón (motor Encoder mBot2, transmisión directa) |
+| Servo 3   | Garra/agarre   | `S1`   | Baja, levanta y suelta el imán N52 sobre la pieza     |
 
-- **Control:** CyberPi (placa del kit mBot2)
-- **Sistema de agarre:** imán N52 (12×3 mm) en el extremo del brazo, asistido
-  por el servo de agarre — ⚠️ **mecanismo exacto pendiente de confirmar**
-  (¿el servo acerca/aleja el imán de la pieza? ¿controla una pinza mecánica?
-  ¿controla el eje vertical de bajar/subir?)
+- **Control:** CyberPi (placa del kit mBot2) con el cliente
+  `examples/cyberpi_arm_client.py`, subido desde mBlock en modo UPLOAD
+- **Sin reductores:** grado de motor = grado de eslabón en los dos ejes (se
+  probó un 3:1 en el hombro y se descartó)
+- **Sistema de agarre (confirmado):** imán N52 (12×3 mm) en el extremo del
+  brazo. El servo `S1` tiene **tres posiciones**: `0°` baja el imán y agarra la
+  pieza, `110°` la **levanta sin soltarla** (para no arrastrarla por el tablero)
+  y `170°` la suelta. Hombro y codo no dan altura: la da este servo
+- **Apoyo del hombro:** un geekservo en `M1` puede empujar a favor del hombro
+  (`ASSIST_ENABLED`, desactivado por defecto)
 - **Fabricación de partes estructurales:** PLA en BambuLab A1 mini
-- **Comunicación Python ↔ CyberPi:** pendiente de documentar (protocolo serial/USB)
+- **Comunicación Python ↔ CyberPi (confirmada):** TCP sobre Wi-Fi. El ordenador
+  abre un servidor (`CyberPiBackend`, puerto 5555) y la CyberPi se conecta a él.
+  Protocolo de líneas de texto: `PING` / `HOME` / `LIMITS` / `ZERO` / `MOVE` /
+  `GRIPPER` / `GET` / `STOP`, cada una con su `ACK` o `ERR <mensaje>`
+- **Referenciado (`HOME`):** los encoders son incrementales, así que al
+  conectar cada eje se empuja contra un tope físico y se declara el cero ahí
+  (primero el codo, luego el hombro). Por eso el hombro solo admite ángulos
+  **positivos** y el codo solo **negativos**
+
+> ⚠️ El cliente lleva `SSID` / `PASS` / `MAC_IP` como **marcadores**: los datos
+> reales del Wi-Fi se escriben solo en mBlock antes de subirlo a la placa y
+> nunca se copian al repositorio.
 
 ⚠️ **Cuidado con el imán N52:** es fuerte y su radio de influencia puede
 desplazar piezas en casillas adyacentes si el brazo pasa muy cerca del tablero
@@ -180,16 +196,26 @@ MoveResponse(
 Recibe una `PositionRequest` (FEN + dificultad), usa Stockfish via protocolo UCI
 y devuelve una `MoveResponse` con todos los metadatos relevantes para el brazo.
 
-**Niveles de dificultad:**
+**Niveles de dificultad (10):**
 
-| Nivel      | Elo aprox. | `movetime` | `Skill Level` |
-|------------|-----------|------------|---------------|
-| `BEGINNER` | ~1350     | 0.05 s     | 0             |
-| `EASY`     | ~1500     | 0.10 s     | 3             |
-| `MEDIUM`   | ~1800     | 0.20 s     | 8             |
-| `HARD`     | ~2200     | 0.50 s     | 14            |
-| `EXPERT`   | ~2600     | 1.00 s     | 18            |
-| `MAXIMUM`  | máximo    | 2.00 s     | 20            |
+| Nivel      | Elo aprox. | `movetime` | Cómo se debilita |
+|------------|-----------|------------|------------------|
+| `LEARNER`  | ~400      | 0.05 s     | errores a propósito (85 %) |
+| `NOVICE`   | ~700      | 0.05 s     | errores a propósito (70 %, pierde ≤ 900 cp) |
+| `CASUAL`   | ~950      | 0.05 s     | errores a propósito (55 %, pierde ≤ 600 cp) |
+| `AMATEUR`  | ~1150     | 0.05 s     | errores a propósito (50 %, pierde ≤ 450 cp) |
+| `BEGINNER` | ~1350     | 0.05 s     | `Skill Level` 0 + `UCI_Elo` |
+| `EASY`     | ~1500     | 0.10 s     | `Skill Level` 3 + `UCI_Elo` |
+| `MEDIUM`   | ~1800     | 0.20 s     | `Skill Level` 8 + `UCI_Elo` (por defecto) |
+| `HARD`     | ~2200     | 0.50 s     | `Skill Level` 14 + `UCI_Elo` |
+| `EXPERT`   | ~2600     | 1.00 s     | `Skill Level` 18 + `UCI_Elo` |
+| `MAXIMUM`  | máximo    | 2.00 s     | sin límite |
+
+Stockfish no baja de ~1320 de Elo, así que los cuatro niveles más bajos se
+debilitan **por software**: el backend pide varias jugadas candidatas
+(`multipv`) y, con cierta probabilidad, elige una peor que la mejor sin perder
+más de un tope de centipeones. En esos niveles el Elo es una etiqueta
+aproximada. Los presets están en `magnus/engine/difficulty.py`.
 
 El backend es intercambiable: cualquier motor UCI (Stockfish, Lc0, Komodo...)
 funciona sin cambiar el resto del sistema.
@@ -238,9 +264,12 @@ Recibe una `MoveResponse` y reproduce los movimientos **pregrabados**
 correspondientes. No calcula cinemática inversa.
 
 - `backend.py` — `ArmBackend` (ABC) + `FakeArmBackend` (tests/demos, registra
-  los comandos) + `CyberPiBackend` (stub hasta confirmar el protocolo)
+  los comandos) + `CyberPiBackend` (servidor TCP al que se conecta la CyberPi;
+  repite hasta 2 veces un `MOVE` que la placa rechaza con `ERR`)
 - `positions_table.py` — carga/consulta de `positions.json` (64 casillas +
-  zonas de descarte/intercambio)
+  zonas `discard`/`exchange` + reposo `park` opcional) e
+  `inspect_positions_file()`, que dice sin lanzar excepciones si la tabla está
+  completa
 - `arm_node.py` — `ArmNode.plan()` genera la secuencia (testeable) y
   `.execute()` la reproduce:
   - Si `is_capture`: mueve primero la pieza capturada a la zona de descarte
@@ -248,6 +277,9 @@ correspondientes. No calcula cinemática inversa.
   - Si `is_en_passant`: retira el peón de `captured_square` (≠ destino)
   - Si `promotion`: peón a descarte + pieza promovida desde la zona de intercambio
   - Activa/desactiva la garra (servo 3) en los momentos correctos
+  - Al terminar, retira el brazo a `park` para no tapar el tablero a la cámara
+  - Fuera del tablero (`discard`, `park`) pide menos precisión
+    (`config.ARM_OFFBOARD_TOLERANCE_DEG`) para no perder tiempo afinando
 
 ```python
 from magnus.arm import ArmNode, FakeArmBackend, make_fake_table
@@ -256,8 +288,8 @@ with ArmNode(backend=FakeArmBackend(), table=make_fake_table()) as arm:
     steps = arm.execute(resp)   # resp: MoveResponse del engine
 ```
 
-**Pendiente (bloqueado por hardware):** implementar `CyberPiBackend` y grabar
-la tabla `positions.json` real calibrando el brazo.
+**Pendiente:** medir el recorrido real de cada eje (`SHOULDER_TRAVEL_DEG` /
+`ELBOW_TRAVEL_DEG`, ahora 300° provisionales) y comprobar `BACKLASH_DEG`.
 
 ---
 
@@ -336,63 +368,92 @@ La plantilla vacía (`python3 examples/generate_positions_template.py`) usa:
 Sustituye los `null` por lecturas reales. Las tablas antiguas con
 `approach`/`engage` siguen cargando; se usa **`engage`** como posición única.
 
+Además de las 64 casillas, la tabla lleva las zonas `discard` (piezas
+capturadas) y `exchange` (piezas de promoción), y opcionalmente **`park`**: una
+pose de reposo **fuera del tablero** a la que el brazo se retira al terminar
+cada jugada, para no estorbar al rival ni taparle el tablero a la cámara. Sin
+`park` se juega igual, solo que el brazo se queda donde terminó.
+
 Una jugada típica (`e2` → `e4`, sin captura):
 
 ```
-S1 a reposo → mover a e2 → S1 recoge → mover a e4 → S1 suelta
+mover a e2 → S1 agarra y levanta → mover a e4 → S1 suelta → mover a park
 ```
 
 ### Cómo grabar la tabla
 
-Con el cliente habitual en la CyberPi y `play.py` cerrado, ejecuta:
+Con el cliente en la CyberPi y `play.py` cerrado, el modo recomendado es
+**`--jog`**: el brazo se mueve con sus propios motores y tú lo ajustas a pasos
+hasta que la punta cae en la casilla. Se graba la **orden**, no la lectura del
+encoder:
 
 ```bash
-python3 examples/record_arm_positions.py e4
-# O todas las casillas y las zonas discard/exchange:
-python3 examples/record_arm_positions.py --all
+python3 examples/record_arm_positions.py --all --jog --write   # toda la tabla
+python3 examples/record_arm_positions.py e4 d5 --jog --write   # solo algunas
+python3 examples/record_arm_positions.py park --jog --write    # zona de reposo
 ```
 
-El script referencia con `HOME` y detiene los motores. Coloca el brazo a mano
-en cada destino y pulsa **Enter una sola vez por casilla**. Imprime el JSON
-para copiarlo a `magnus/arm/positions.json`; no escribe la tabla automáticamente.
-No reinicies la CyberPi entre lecturas: perderías el cero.
+> **Por qué no colocarlo a mano.** Con los motores sueltos el brazo no flexa
+> igual que cuando lo empujan los motores: el mismo ángulo de encoder deja la
+> punta en dos sitios distintos. Una tabla medida a mano se queda corta siempre
+> en el mismo sentido y sin dar ningún error.
 
-Cuando conectes S1, ajusta `GRIPPER_ENGAGE_ANGLE` (recoger) y
-`GRIPPER_RELEASE_ANGLE` (posición inicial para soltar) en el cliente CyberPi.
-Sus valores actuales son provisionales; no se graban por casilla ni por pieza.
+Teclas del modo `--jog`:
 
-### Si el hombro se queda corto o el brazo cae entre movimientos
+| Tecla | Qué hace |
+|-------|----------|
+| `h+5`, `c-3`, `h+2 c-1` | ajusta hombro / codo a pasos |
+| `h=85` | fija un valor exacto |
+| `Enter` | graba la casilla y pasa a la siguiente |
+| `p` | prueba a recoger la pieza (agarra y levanta; `Enter` la suelta) |
+| `v` | lleva el brazo a la orden desde lejos y por los dos lados, como al jugar |
+| `r` | hace `HOME` otra vez (`--home-each` lo hace antes de cada destino) |
+| `s` / `q` | salta la casilla / sale |
 
-El cliente `examples/cyberpi_arm_client.py` activa la retención nativa
-`EM_lock` (`HOLD_ENABLED=True`) durante `HOME` y `MOVE`. Así los motores
-intentan sostener su posición entre jugadas y mientras se mueve el otro eje
-o la garra. Las correcciones pequeñas del hombro usan `SHOULDER_FINE_RPM=60`;
-el codo conserva sus 40 RPM. Los reintentos siguen limitados a cuatro por eje.
-Al terminar se leen **ambos encoders otra vez**: si el hombro cedió al mover
-el codo, se informa un error en vez de confirmar una posición antigua.
+`--write` **fusiona** lo grabado en `magnus/arm/positions.json` (dejando una
+copia `.bak`): grabar dos casillas no borra las demás. Sin `--write` solo
+imprime el JSON. No apagues el shield ni reinicies la CyberPi entre lecturas:
+perderías el cero.
 
-**Hay que volver a subir ese archivo desde mBlock en modo UPLOAD**: reiniciar
-`play.py` no actualiza la placa. Completa los datos Wi-Fi solo en mBlock.
-Si aparece `EM_lock no disponible`, actualiza el firmware de CyberPi/mBot2.
+Los tres ángulos de la garra (`GRIPPER_ENGAGE_ANGLE`, `GRIPPER_LIFT_ANGLE`,
+`GRIPPER_RELEASE_ANGLE`) son comunes a todas las piezas y viven en el cliente
+de la CyberPi; no se graban por casilla.
 
-Al arrancar aparece `MAGNUS arm client (retencion)` y se enciende la luz azul
-antes de consultar el Wi-Fi. El cliente arranca directamente: no envolver
-esa sección en `if __name__ == "__main__"`, porque dependería del nombre
-que asigne el cargador. La versión que tenía esa condición podía terminar
-sin mostrar nada ni iniciar la conexión. Sustitúyela por el archivo completo
-actualizado y vuelve a subirlo desde mBlock.
+### Cómo se mueve cada eje (cliente CyberPi)
 
-Con `play.py` cerrado y el espacio del brazo despejado, ejecuta
-`python3 test_humo.py`. La prueba muestra llegada, deriva después de tres
-segundos en reposo y retorno a cero, para los dos ejes. Si `MOVE` devuelve un
-error físico, imprime las lecturas y aborta sin ordenar otro movimiento.
+El control interno del motor encoder es de **velocidad**, no de par: a pocas
+RPM no vence el peso del brazo. Por eso cada `MOVE` tiene dos fases:
 
-`STOP`, los errores de ejecución y el cierre detectado de la conexión
-**liberan los motores**; sostén el brazo al parar o cerrar. Esto mantiene la
-calibración manual con `record_arm_positions.py`. La retención consume energía
-y no garantiza fuerza suficiente bajo cualquier carga: si sigue cediendo con
-la batería cargada, hay que revisar carga y sujeciones antes de calibrar la
-tabla. La precisión real queda pendiente de probar en el montaje físico.
+1. **Tramo grueso** con `EM_turn`; si una pasada se queda corta, la siguiente
+   va más rápida (más RPM = más par).
+2. **Último tramo** con impulsos de potencia cruda que miden el ritmo real del
+   eje y se acortan al acercarse, para llegar sin pasarse.
+
+Otras defensas, todas en `examples/cyberpi_arm_client.py`:
+
+- **Retención nativa** (`EM_lock`, `HOLD_ENABLED`): los ejes se sostienen
+  entre movimientos. `STOP`, un fallo o una desconexión **liberan los
+  motores**: sostén el brazo con la mano al pararlo.
+- **El codo se mueve primero y el hombro al final**, porque el hombro es el
+  que peor se sostiene. Al terminar se releen los dos encoders y se corrige el
+  que haya cedido.
+- **Compensación de juego** (`BACKLASH_DEG`, 3°): el último tramo entra
+  siempre en el mismo sentido, así la tabla grabada a pasos cortos y la
+  partida con giros largos llegan igual.
+- **Presupuesto de tiempo:** un `MOVE` deja de afinar a los 15 s y responde
+  con lo que haya; si lo rechaza, el ordenador lo repite (es absoluto, así que
+  repetirlo lleva al mismo sitio).
+
+**Cada cambio del cliente hay que volver a subirlo desde mBlock en modo
+UPLOAD**: reiniciar `play.py` no actualiza la placa. Si aparece `EM_lock no
+disponible`, actualiza el firmware de CyberPi/mBot2. Si la subida se queda
+colgada en 1 %, para el programa en marcha, cierra el monitor serie, reinicia
+la placa o prueba otro cable USB.
+
+Con `play.py` cerrado y el espacio del brazo despejado, `python3 test_humo.py`
+mide el error de cada eje, la deriva en reposo y el retorno a cero, e imprime
+un diagnóstico. Si el brazo se queda corto, la causa número uno es la batería
+del shield (los motores **no** se alimentan del USB).
 
 ### Corrección automática de posición (V2 — futuro, no implementar todavía)
 
@@ -612,7 +673,8 @@ resp_dict = response.to_dict()          # MoveResponse también tiene to_dict()
 ### ✅ Completado
 
 - Contratos de datos entre módulos (`magnus/core/`)
-- Nodo del engine completo con 6 niveles de dificultad (`magnus/engine/`)
+- Nodo del engine completo con 10 niveles de dificultad (`magnus/engine/`),
+  los cuatro más bajos con errores a propósito
 - Backend UCI intercambiable (Stockfish por defecto)
 - Constantes físicas centralizadas (`magnus/config.py`)
 - Módulo de visión completo (`magnus/vision/`): detección con enclavamiento,
@@ -626,7 +688,15 @@ resp_dict = response.to_dict()          # MoveResponse también tiene to_dict()
 - Aplicación de juego con panel de control web (`play.py` + `magnus/app/`):
   partida en vivo, dificultad en caliente, ajustes persistentes, brazo en modo
   apagado / simulado / CyberPi
-- Suite de tests completa (320+) con backends falsos — corre sin ningún hardware
+- Voz en español (`magnus/voice/`): narra, comenta la calidad de las jugadas y
+  avisa de jugadas ilegales
+- Comunicación con la CyberPi por TCP sobre Wi-Fi (`CyberPiBackend` + cliente
+  `examples/cyberpi_arm_client.py`) con referenciado `HOME` contra topes
+- Garra con imán N52 y tres posiciones del servo (agarrar, levantar, soltar)
+- Tabla `positions.json` grabada con el brazo real (64 casillas + `discard` +
+  `exchange` + `park`) y grabador `--jog` que mueve el brazo con sus motores
+- Suite de tests completa (480+) con backends falsos — corre sin ningún hardware,
+  incluido el cliente de la CyberPi con un shield simulado
 - CI en GitHub Actions (tests en cada push/PR)
 - Generador de marcadores ArUco imprimibles y de la plantilla de posiciones
 
@@ -634,17 +704,17 @@ resp_dict = response.to_dict()          # MoveResponse también tiene to_dict()
 
 - Validar la visión con la cámara y el tablero físicos reales
 - Calibración de la cámara real (el código ya existe: `magnus/vision/calibration.py`)
-- Definición del mecanismo exacto de la garra (servo 3)
-- Protocolo de comunicación Python ↔ CyberPi → implementar `CyberPiBackend`
-- Grabar la tabla `positions.json` real calibrando el brazo
-- Zona de piezas capturadas (física)
+- Afinar la precisión del brazo: medir el recorrido real de cada eje y
+  comprobar `BACKLASH_DEG` con la tecla `v` del modo `--jog`
+- Probar el geekservo de apoyo del hombro (`ASSIST_ENABLED`, `ASSIST_SIGN`)
+- Elegir la voz definitiva de oído (`examples/audition_voices.py`)
 
 ### 🔴 Pendiente (V2 / mejoras)
 
 - Rastreo del marcador del brazo (`magnus/vision/arm_tracker.py`)
 - Corrección automática de posición por visión (V2)
-- Interfaz de usuario / indicadores de estado (LEDs, pantalla CyberPi)
-- Orquestador de partida completa con hardware real (bucle de juego)
+- Indicadores de estado en el propio robot (LEDs, pantalla CyberPi)
+- Pasar a la Raspberry Pi como computadora del robot
 
 ---
 
@@ -655,9 +725,9 @@ resp_dict = response.to_dict()          # MoveResponse también tiene to_dict()
 git clone https://github.com/LeoZ24/MAGNUS_Chess_Robot.git
 cd MAGNUS_Chess_Robot
 
-# 2. Dependencias Python
-pip install -r requirements.txt
-pip install -r requirements-dev.txt   # (opcional) pytest, para correr los tests
+# 2. Dependencias Python (en macOS: python3 -m pip, no pip a secas)
+python3 -m pip install -r requirements.txt
+python3 -m pip install -r requirements-dev.txt   # (opcional) pytest, para los tests
 
 # 3. Motor de ajedrez (binario externo)
 sudo apt install stockfish        # Linux / Raspberry Pi
@@ -673,6 +743,8 @@ export MAGNUS_ENGINE_PATH=/ruta/a/tu/motor_uci
 chess>=1.10                     # python-chess: FEN, reglas, protocolo UCI
 opencv-contrib-python>=4.7      # cv2 + cv2.aruco (visión)
 numpy>=1.23
+piper-tts>=1.6                  # voz neuronal local (OPCIONAL: sin esto juega en silencio
+                                # o con la voz `say` de macOS)
 ```
 
 ---
@@ -710,7 +782,7 @@ Lo que se ve en pantalla:
 - **Banner de fase**: preparación (piezas detectadas 27/32) → *tu turno* →
   *MAGNUS piensa* → *MAGNUS juega e4* → *brazo en movimiento* → fin de partida.
 - **Lista de jugadas, capturas, registro de actividad** y **subtítulo de la voz**.
-- **Ajustes** (engranaje o tecla `S`): dificultad (6 niveles con Elo), color,
+- **Ajustes** (engranaje o tecla `S`): dificultad (10 niveles con Elo), color,
   cámara (girar mapeo, reiniciar detección), voz y brazo. Se guardan en
   `magnus_settings.json` y se recuperan al arrancar.
 
@@ -724,22 +796,24 @@ Atajos: `G` iniciar partida · `O` observar · `E` ejecutar brazo · `Esc` parad
 |------|----------|------------|
 | Apagado | MAGNUS canta la jugada y el humano mueve la pieza por él | ninguno |
 | Simulado | Muestra la secuencia exacta que ejecutaría el brazo, paso a paso, con backend falso | ninguno |
-| CyberPi | Ejecuta de verdad por TCP (`CyberPiBackend`) | `magnus/arm/positions.json` **completo** (64 casillas + `discard` + `exchange`) |
+| CyberPi | Ejecuta de verdad por TCP (`CyberPiBackend`) | `magnus/arm/positions.json` **completo** (64 casillas + `discard` + `exchange`; `park` opcional) |
 
-Los ajustes guardados ya activan **CyberPi**, **HOME** al conectar y ejecución
-automática con las 66 posiciones medidas. Cierra el script de calibración,
-enciende la CyberPi con el cliente habitual y ejecuta `python3 play.py` desde
-la carpeta del proyecto. La terminal muestra la IP y el puerto TCP del host.
-Espera a que termine HOME, coloca el tablero inicial y pulsa **Iniciar partida**.
-MAGNUS juega con negras según los ajustes actuales.
+Para jugar con el brazo real: cierra el script de calibración, enciende la
+CyberPi con el cliente subido y ejecuta `python3 play.py` desde la carpeta del
+proyecto. La terminal muestra la IP y el puerto TCP del host. Al conectar, el
+brazo se referencia solo (`HOME`, ajuste `arm_auto_home`; también hay un botón
+**Referenciar**). Coloca el tablero inicial y pulsa **Iniciar partida**.
 
-Con S1 aún desconectado, el brazo recorre origen y destino y envía igualmente
-las órdenes de recoger/soltar. Después mueve tú la pieza: el panel muestra
-**Recorrido terminado** hasta que la cámara confirme la jugada. No avanza el
-turno ni repite el recorrido solo porque los motores hayan terminado.
+- **Ejecución automática** por defecto: el brazo hace cada jugada solo. El
+  selector «Automático / Con botón» del panel del brazo lo cambia.
+- **La jugada del brazo cuenta al soltar la última pieza**, sin esperar a la
+  cámara (que el propio brazo tapa); mientras tanto el tablero de la pantalla
+  sigue al brazo pieza a pieza. Si la pieza no quedó bien, el brazo no vuelve a
+  arrancar hasta que la cámara ve el tablero como debe estar.
+- **PARADA** (`Esc`) o un fallo **no apagan** el modo automático: solo esa
+  jugada queda en pausa esperando **Ejecutar**; la siguiente vuelve a ser
+  automática.
 
-**PARADA** (`Esc`) o un fallo desactivan la ejecución automática; tras revisar
-el brazo, puedes ejecutar con el botón o volver a activar el ajuste.
 `--synthetic` usa el brazo simulado aunque los ajustes guardados indiquen CyberPi;
 para combinar tablero simulado y brazo real hay que indicar `--arm cyberpi`.
 
@@ -842,6 +916,12 @@ python3 examples/generate_aruco_markers.py
 
 # Plantilla de positions.json para calibrar el brazo (valores en null)
 python3 examples/generate_positions_template.py
+
+# Grabar posiciones del brazo moviéndolo con sus motores (ver "Cómo grabar la tabla")
+python3 examples/record_arm_positions.py --all --jog --write
+
+# Prueba de humo y diagnóstico de los motores del brazo real
+python3 test_humo.py
 ```
 
 ---
@@ -857,8 +937,10 @@ pytest tests/ -k "capture"      # solo tests de capturas
 ```
 
 Ningún test necesita hardware: el engine usa `FakeBackend`, el brazo usa
-`FakeArmBackend` + tabla falsa (valores 9999.x) y la visión usa imágenes
-sintéticas con marcadores ArUco reales inyectadas por `FakeCameraBackend`.
+`FakeArmBackend` + tabla falsa (valores 9999.x), la visión usa imágenes
+sintéticas con marcadores ArUco reales inyectadas por `FakeCameraBackend`, y
+el cliente de la CyberPi se importa con un `cyberpi` falso y un shield simulado
+que se queda corto, cede y pierde la retención (`tests/test_cyberpi_arm_client.py`).
 Los tests de integración con Stockfish se marcan con
 `@pytest.mark.skipif(not _engine_available(), ...)`. La suite corre también en
 CI (GitHub Actions) en cada push y pull request.
@@ -900,14 +982,30 @@ magnus/
 │   ├── synthetic.py         # imágenes sintéticas para tests/demos
 │   ├── board_render.py      # tablero 2D con iconos + dashboard del demo
 │   └── vision_node.py       # BoardVisionNode + backends de cámara
-└── arm/                     # 🔶 software listo; falta hardware
-    ├── __init__.py
-    ├── backend.py            # ArmBackend (ABC) + FakeArmBackend + CyberPiBackend (stub)
-    ├── positions_table.py    # carga/consulta de positions.json
-    └── arm_node.py           # MoveResponse → secuencia de movimientos
-    (positions.json — se graba calibrando el brazo real)
-examples/
-tests/
+├── voice/                   # ✅ narración y comentarios en español
+│   ├── backend.py           # SpeechBackend (ABC) + Piper + macOS say + Fake
+│   ├── speech_text.py       # "g1" -> "ge uno"; MoveResponse -> narración
+│   ├── phrases.py           # frases con variantes (no repite la última)
+│   ├── commentary.py        # Δ centipeones -> "error grave" / "buena jugada"
+│   └── voice_node.py        # VoiceNode: cola + hilo propio
+├── arm/                     # 🔶 funcionando con el brazo real; afinando precisión
+│   ├── __init__.py
+│   ├── backend.py           # ArmBackend (ABC) + FakeArmBackend + CyberPiBackend (TCP)
+│   ├── positions_table.py   # carga/consulta de positions.json + inspect_positions_file()
+│   ├── arm_node.py          # MoveResponse → secuencia de movimientos
+│   └── positions.json       # tabla grabada con el brazo real
+└── app/                     # ✅ aplicación de juego (interfaz web)
+    ├── session.py           # GameSession + EngineWorker + SyntheticCamera
+    ├── settings.py          # AppSettings <-> magnus_settings.json
+    ├── arm_bridge.py        # ArmSupervisor: off / simulated / cyberpi
+    ├── controller.py        # MagnusController: bucle de visión + cola de comandos
+    ├── server.py            # HTTP (stdlib): página, SSE de estado, cámara, comandos
+    ├── overlays.py          # dibujo sobre la imagen de la cámara
+    └── static/              # index.html + app.css + app.js (sin frameworks)
+play.py                      # ⭐ punto de entrada para jugar
+test_humo.py                 # prueba de humo de los motores del brazo real
+examples/                    # demos + cyberpi_arm_client.py (código de la placa)
+tests/                       # 480+ tests, todos sin hardware
 ```
 
 ### Patrones de diseño
