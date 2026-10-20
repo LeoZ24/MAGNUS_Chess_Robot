@@ -29,7 +29,7 @@ proyecto usa un enfoque de **"enseñar y reproducir" (teach & playback)**:
 
 1. Los ángulos de hombro/codo para llegar a cada una de las 64 casillas se
    registran **una sola vez**, de antemano, y se guardan en una tabla
-   (`magnus/arm/positions.json` o similar)
+   (`magnus/arm/positions.json`, ya grabada con el brazo real)
 2. En tiempo de juego, el nodo del brazo **solo busca en la tabla** — nunca
    calcula geometría
 
@@ -86,9 +86,9 @@ código: `positions.json` se graba directamente en grados de motor.
   este servo.
 - **Imán de agarre:** N52, 12×3 mm — muy fuerte. Su radio de influencia puede
   desplazar piezas en casillas adyacentes si el brazo pasa muy cerca del
-  tablero en movimientos laterales. Por eso la tabla de posiciones debería
-  tener una sub-posición "segura" (`approach`) además de la de contacto
-  (`engage`) — ver siguiente sección.
+  tablero en movimientos laterales. Por eso la garra **levanta** la pieza
+  (`GRIPPER_LIFT_ANGLE`) antes de que el brazo se desplace: la altura la da el
+  servo, no una sub-posición de la tabla.
 
 ### ⚠️ Los motores NO tienen cero absoluto — hay que referenciar
 
@@ -315,28 +315,27 @@ cede y que pierde la retención. Si tocas `_move_axis`, `_drive_turns`,
 
 ## Formato de `magnus/arm/positions.json`
 
-> Formato **implementado** en `magnus/arm/positions_table.py`: dos
-> sub-posiciones por casilla (`approach` + `engage`). Las **unidades** (grados
-> vs. pasos de encoder) siguen abiertas a propósito: la tabla y el backend
-> deben usar las mismas, pero el código no las interpreta.
+> Formato **implementado** en `magnus/arm/positions_table.py`: **una sola
+> posición por casilla** (hombro + codo), en grados de motor medidos desde el
+> cero de `HOME`. Hombro y codo no dan altura (la da el servo de la garra), así
+> que no hace falta más de una pose por casilla.
 
 ```json
 {
-  "e4": {
-    "approach": { "shoulder": 32.5, "elbow": 110.0 },
-    "engage": { "shoulder": 35.0, "elbow": 118.0 }
-  }
+  "e4": { "shoulder": 83.0, "elbow": -123.0 },
+  "discard": { "shoulder": ..., "elbow": ... },
+  "exchange": { "shoulder": ..., "elbow": ... },
+  "park": { "shoulder": ..., "elbow": ... }
 }
 ```
 
-- `approach`: el brazo está sobre la casilla, a altura segura (no toca piezas vecinas)
-- `engage`: el brazo está bajado, en posición de agarrar/soltar
+Las tablas antiguas con `approach`/`engage` siguen cargando: se usa `engage`
+como posición única y `approach` se ignora (campo legado).
 
 Una jugada simple (`e2`→`e4`, sin captura) se traduce en una secuencia como:
 
 ```
-approach(e2) → engage(e2) → [activar garra] → approach(e2)
-            → approach(e4) → engage(e4) → [soltar garra] → approach(e4)
+mover(e2) → [garra: agarrar + levantar] → mover(e4) → [garra: soltar] → mover(park)
 ```
 
 Una captura, enroque, captura al paso o promoción necesitan secuencias
@@ -360,10 +359,13 @@ queda un aviso en el log). Para grabarla:
 python3 examples/record_arm_positions.py park --jog
 ```
 
-**No tienes el archivo `positions.json` todavía.** No lo inventes con datos
-ficticios salvo que sea explícitamente para un test (`FakeArmBackend`) — en
-ese caso, usa valores claramente marcados como falsos (ej. `9999.0`) para que
-no se confundan con datos reales.
+**`positions.json` YA EXISTE y está grabado con el brazo real** (67 claves:
+64 casillas + `discard` + `exchange` + `park`; hay un `positions.json.bak` de
+la grabación anterior). ⚠️ Son datos medidos: **no los edites a mano ni los
+regeneres** — se corrigen volviendo a grabar con
+`examples/record_arm_positions.py --jog --write`. En los tests no lo uses:
+usa `make_fake_table()` (valores `9999.x`, claramente falsos) con
+`FakeArmBackend`.
 
 ---
 
@@ -391,6 +393,12 @@ class MoveResponse:
 
 El engine está terminado. Usa Stockfish via protocolo UCI con `python-chess`.
 Tests completos en `tests/test_chess_engine.py`. No requiere refactoring.
+
+Hay **10 niveles** de dificultad (`magnus/engine/difficulty.py`, de `LEARNER`
+a `MAXIMUM`). Stockfish no baja de ~1320 de Elo, así que los cuatro más bajos
+(`LEARNER`..`AMATEUR`) **no** limitan al motor: el backend pide varias
+candidatas (`multipv`) y con probabilidad `mistake_chance` elige una peor (sin
+perder más de `max_loss_cp`). En esos niveles el Elo es solo una etiqueta.
 
 Si necesitas modificar algo aquí, los tests deben seguir pasando:
 
@@ -519,7 +527,7 @@ Reglas del paquete:
   pieza no quedó bien, la red de seguridad es `_board_ready_for_arm()`: el
   brazo no vuelve a arrancar hasta que la cámara ve el tablero como debe estar
 
-### 🔶 `magnus/arm/` — IMPLEMENTADO EN SOFTWARE; bloqueado por hardware
+### 🔶 `magnus/arm/` — FUNCIONANDO con el brazo real; falta afinar precisión
 
 Sigue el patrón de `magnus/engine/`:
 
@@ -530,7 +538,8 @@ Sigue el patrón de `magnus/engine/`:
   de cada eje; `move_to()` registra los ángulos que la placa alcanzó de verdad
   y avisa en el log si se quedó corto
 - `positions_table.py` — carga/consulta de `positions.json` (64 casillas +
-  zonas `discard`/`exchange`); `make_fake_table()` con valores 9999.x para tests
+  zonas `discard`/`exchange` obligatorias + `park` opcional);
+  `make_fake_table()` con valores 9999.x para tests
 - `arm_node.py` — `ArmNode.plan()` (secuencia testeable sin hardware) y
   `.execute(resp, on_step=...)`; maneja captura, al paso, enroque y promoción
 - `positions_table.py` también ofrece `inspect_positions_file()` →
@@ -559,12 +568,13 @@ probar otro cable USB. Por eso el cliente **nunca** usa bucles de espera sin
 límite de tiempo: una placa colgada es una placa a la que cuesta subirle un
 programa nuevo.
 
-Pendiente (bloqueado por hardware):
+Pendiente (en el brazo real):
 
 - Medir el recorrido real de cada eje y ajustar `SHOULDER_TRAVEL_DEG` /
   `ELBOW_TRAVEL_DEG` (ahora son 300° provisionales, generosos de más)
-- Grabar `positions.json` real calibrando el brazo **desde el cero
-  referenciado** (`examples/generate_positions_template.py` genera la plantilla)
+- Regrabar con `--jog` las casillas donde el imán no caiga centrado (`p` lo
+  prueba); `positions.json` ya está grabado desde el cero referenciado
+- Probar el geekservo de apoyo (`ASSIST_ENABLED` / `ASSIST_SIGN`)
 - Comprobar `BACKLASH_DEG` (3° por defecto) con la tecla `v` del modo `--jog`.
   Está **activado** porque la reductora interna del motor encoder tiene juego
   que el encoder no ve: el último tramo entra siempre en el mismo sentido
@@ -732,12 +742,12 @@ magnus/
 │   ├── phrases.py       # frases con variantes (no repetir)
 │   ├── commentary.py    # Δ centipeones -> "error grave" / "buena jugada"
 │   └── voice_node.py    # VoiceNode: cola + hilo (no bloquea la visión)
-├── arm/           # 🔶 software listo; positions.json bloqueado por hardware
+├── arm/           # 🔶 funcionando con el brazo real; afinando precisión
 │   ├── __init__.py
 │   ├── backend.py           # ArmBackend ABC + FakeArmBackend + CyberPiBackend (TCP)
 │   ├── positions_table.py   # carga/consulta de positions.json + inspect_positions_file()
-│   └── arm_node.py          # MoveResponse → secuencia de sub-movimientos
-│   (positions.json — NO existe: se graba calibrando el brazo real)
+│   ├── arm_node.py          # MoveResponse → secuencia de sub-movimientos
+│   └── positions.json       # tabla REAL grabada con el brazo (no editar a mano)
 └── app/           # ✅ la aplicación de juego (interfaz web)
     ├── session.py       # GameSession + EngineWorker + SyntheticCamera (compartido con el demo)
     ├── settings.py      # AppSettings <-> magnus_settings.json
@@ -749,7 +759,7 @@ magnus/
 play.py            # ⭐ punto de entrada para jugar: python3 play.py [--synthetic]
 test_humo.py       # prueba de humo + diagnóstico de los motores (hardware real)
 examples/          # demos ejecutables + cyberpi_arm_client.py (código de la placa)
-tests/             # 320+ tests; todos corren sin hardware
+tests/             # 480+ tests; todos corren sin hardware
 ```
 
 ---

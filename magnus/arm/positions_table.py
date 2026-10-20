@@ -23,12 +23,13 @@ usan tal cual se grabaron.  Lo único que importa es que la tabla y el backend
 usen las mismas.
 
 Además de las 64 casillas, la tabla puede incluir zonas especiales
-(``config.ZONE_DISCARD``, ``config.ZONE_EXCHANGE``) para capturas y promociones.
+(``config.ZONE_DISCARD``, ``config.ZONE_EXCHANGE``) para capturas y promociones,
+y la zona de reposo opcional ``park``.
 
-El archivo ``positions.json`` real NO existe todavía (se creará al calibrar el
-brazo físico; ver ``examples/generate_positions_template.py``).  Para tests y
-demos usar :func:`make_fake_table`, cuyos valores 9999.0 son deliberadamente
-irreales para que nunca se confundan con datos medidos.
+El ``positions.json`` real ya está grabado con el brazo físico (se corrige
+volviendo a grabar con ``examples/record_arm_positions.py --jog --write``, no a
+mano).  Para tests y demos usar :func:`make_fake_table`, cuyos valores 9999.0
+son deliberadamente irreales para que nunca se confundan con datos medidos.
 """
 
 from __future__ import annotations
