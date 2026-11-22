@@ -79,7 +79,31 @@ Also available as [`BOM.csv`](BOM.csv).
 | Laptop (MacBook Air M1) | 1 | Runs vision, Stockfish, voice and the web panel | |
 | Stockfish | 1 | Chess engine | [stockfishchess.org](https://stockfishchess.org) |
 
-3D models: [`Assets/3d_Models/`](Assets/3d_Models/).
+### 3D models
+
+All printed parts are in [`Assets/3d_Models/`](Assets/3d_Models/) (STL, PLA on a
+Bambu Lab A1 mini). Sizes are the bounding box of each file.
+
+| File | Part | Size (mm) |
+|---|---|---|
+| [`Base_del_Robot.stl`](Assets/3d_Models/Base_del_Robot.stl) | Robot base (black), holds the shoulder motor | 132 × 151 × 45 |
+| [`Pecho_del_Robot1.stl`](Assets/3d_Models/Pecho_del_Robot1.stl) | Body, lower part | 109 × 124 × 66 |
+| [`Pecho_del_Robot2.stl`](Assets/3d_Models/Pecho_del_Robot2.stl) | Body, upper part | 109 × 124 × 34 |
+| [`Cabeza_Parte_Blanca.stl`](Assets/3d_Models/Cabeza_Parte_Blanca.stl) | Head, white shell | 86 × 113 × 86 |
+| [`Cabeza_Parte_Negra.stl`](Assets/3d_Models/Cabeza_Parte_Negra.stl) | Head, black front | 77 × 112 × 81 |
+| [`Cara.stl`](Assets/3d_Models/Cara.stl) | Face (eyes and smile) | 1 × 58 × 34 |
+| [`Sombrero.stl`](Assets/3d_Models/Sombrero.stl) | Hat | 121 × 148 × 45 |
+| [`Soporte_Brazo_del_Robot_V2.stl`](Assets/3d_Models/Soporte_Brazo_del_Robot_V2.stl) | Arm support (v2) | 156 × 76 × 61 |
+| [`Lego_Frame_Adapter.stl`](Assets/3d_Models/Lego_Frame_Adapter.stl) | Adapter between LEGO Technic frames and printed parts | 56 × 40 × 8 |
+| [`Gripper.stl`](Assets/3d_Models/Gripper.stl) | Gripper housing (the magnet slides inside, lifted by the string winch) | 40 × 63 × 67 |
+| [`Sostenedor_de_Iman.stl`](Assets/3d_Models/Sostenedor_de_Iman.stl) | Holder for the N52 12×3 mm magnet | 12 × 12 × 3 |
+| [`Soporte_de_la_Camara_Mastil.stl`](Assets/3d_Models/Soporte_de_la_Camara_Mastil.stl) | Camera mast | 58 × 43 × 146 |
+| [`Soporte_de_la_Camara_Base.stl`](Assets/3d_Models/Soporte_de_la_Camara_Base.stl) | Camera support base | 184 × 91 × 54 |
+| [`Chess Pieces final-3.stl`](Assets/3d_Models/Chess%20Pieces%20final-3.stl) | Chess pieces (print plate) | 153 × 112 × 27 |
+| [`Base del tablero-3.stl`](Assets/3d_Models/Base%20del%20tablero-3.stl) | Board base | 150 × 150 × 7 |
+| [`Gear adapter-1.stl`](Assets/3d_Models/Gear%20adapter-1.stl) | Gear adapter from the 3:1 shoulder reduction (discarded, kept for reference) | 87 × 137 × 7 |
+
+The parts were designed in Onshape and Tinkercad.
 
 ---
 
