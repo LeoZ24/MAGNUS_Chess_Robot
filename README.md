@@ -4,6 +4,83 @@
 > Un robot que detecta el estado del tablero con visión artificial, calcula la mejor
 > jugada con un motor de ajedrez y la ejecuta físicamente con un brazo articulado.
 
+<p align="center">
+  <img src="docs/images/fair-stand.jpg" alt="MAGNUS at the science fair, next to the board and the web control panel" width="800">
+</p>
+
+## In English: what MAGNUS is
+
+MAGNUS is a robot that plays chess against you on a real board and announces
+its moves out loud in Spanish. You move your piece by hand; a phone camera above
+the board reads the ArUco marker on top of every piece, Stockfish picks the
+reply, and a 2-joint arm picks the piece up with a magnet and puts it on its new
+square. It handles captures, castling, en passant and promotion.
+
+- **Vision:** OpenCV + ArUco (`DICT_4X4_50`) markers on the pieces and the four
+  board corners; the human's move is inferred by comparing the board against all
+  legal moves.
+- **Engine:** Stockfish through python-chess, 10 difficulty levels.
+- **Arm:** shoulder and elbow driven by two mBot2 encoder motors on a CyberPi
+  (Wi-Fi, TCP). No inverse kinematics: the angles for all 64 squares are
+  recorded once with the real arm and replayed (teach and playback).
+- **Gripper:** a servo winds a string on a LEGO pulley to lower, lift and
+  release an N52 magnet inside a printed housing.
+- **Voice:** Spanish narration, move-quality comments and illegal-move warnings,
+  so a player can follow the game without looking at a screen.
+- **Build:** LEGO Technic + parts designed in Onshape / Tinkercad and printed in
+  PLA on a Bambu Lab A1 mini.
+
+Quick start without hardware: install Stockfish, then
+`pip install -r requirements.txt` and `python3 play.py --synthetic`
+(see [Ejecución rápida](#ejecución-rápida)).
+
+### Photos
+
+| | |
+|---|---|
+| <img src="docs/images/robot-and-board.jpg" alt="MAGNUS next to the board with ArUco pieces" width="400"> | <img src="docs/images/robot-side-board.jpg" alt="Side view of the robot over the board" width="400"> |
+| <img src="docs/images/arm-over-board.jpg" alt="Arm reaching over the board" width="400"> | <img src="docs/images/gripper-string-closeup.jpg" alt="Gripper: string winch lifting the magnet housing" width="400"> |
+| <img src="docs/images/gripper-winch.jpg" alt="Gripper winch: servo, bevel gears and pulley" width="400"> | <img src="docs/images/base-shoulder-motor.jpg" alt="Printed base with the shoulder encoder motor" width="400"> |
+| <img src="docs/images/printed-pieces.jpg" alt="3D printed chess pieces" width="400"> | <img src="docs/images/printable-board.jpg" alt="Printable board with the four corner markers" width="400"> |
+
+<details>
+<summary>More build photos</summary>
+
+| | |
+|---|---|
+| <img src="docs/images/robot-hat-front.jpg" alt="MAGNUS with a hat, front view" width="300"> | <img src="docs/images/robot-face.jpg" alt="Robot head and body" width="300"> |
+| <img src="docs/images/camera-mast-cyberpi.jpg" alt="Camera mast and CyberPi on the side of the body" width="300"> | <img src="docs/images/shoulder-inside-body.jpg" alt="Shoulder gear inside the printed body" width="300"> |
+| <img src="docs/images/building.jpg" alt="Assembling the arm at my desk" width="300"> | <img src="docs/images/printing-body-a1mini.jpg" alt="Printing the body on the Bambu Lab A1 mini" width="300"> |
+| <img src="docs/images/body-print-cyberpi.jpg" alt="Body print with the CyberPi" width="300"> | <img src="docs/images/workbench-assembly.jpg" alt="Arm taken apart on the workbench" width="300"> |
+| <img src="docs/images/lego-arm-prototype.jpg" alt="First LEGO arm prototype" width="300"> | <img src="docs/images/first-board-test.jpg" alt="First board and pieces test" width="300"> |
+| <img src="docs/images/rook-prints.jpg" alt="Rook print tests" width="300"> | |
+
+</details>
+
+### Bill of Materials
+
+Also available as [`BOM.csv`](BOM.csv).
+
+| Item | Qty | Used for | Link |
+|---|---|---|---|
+| CyberPi + mBot2 Shield | 1 | Arm controller, Wi-Fi link to the computer | [Makeblock mBot2](https://www.makeblock.com/pages/mbot2-coding-robot) |
+| mBot2 encoder motor | 2 | Shoulder (EM1) and elbow (EM2), direct drive | [Makeblock mBot2](https://www.makeblock.com/pages/mbot2-coding-robot) |
+| Micro servo (LEGO-compatible) | 1 | Gripper winch (S1): grab / lift / release | |
+| Geekservo motor (2-wire) | 1 | Optional shoulder assist (M1), off by default | |
+| N52 magnet 12×3 mm | 1 | Gripper magnet | |
+| Neodymium magnet 10×2 mm | 64 | Two per piece (top for the arm, bottom for the board) | |
+| Neodymium magnet 6×3 mm | 64 | One under each square | |
+| LEGO Technic parts | assorted | Arm links, frames, gears, winch pulley | |
+| Thread / string | 1 | Gripper winch line | |
+| PLA filament (white + black) | as needed | Body, head, base, gripper housing, camera mast, 32 pieces | [Bambu Lab](https://bambulab.com) |
+| Printed ArUco labels | 36 | 32 piece markers + 4 corner markers | `examples/generate_aruco_markers.py` |
+| Printed board sheet (300×300 mm) + wooden base | 1 | Board surface, 32 mm squares | |
+| Smartphone + mount | 1 | Overhead camera | [Iriun Webcam](https://iriunwebcam.com) |
+| Laptop (MacBook Air M1) | 1 | Runs vision, Stockfish, voice and the web panel | |
+| Stockfish | 1 | Chess engine | [stockfishchess.org](https://stockfishchess.org) |
+
+3D models: [`Assets/3d_Models/`](Assets/3d_Models/).
+
 ---
 
 ## Índice

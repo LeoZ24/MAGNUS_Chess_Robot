@@ -1,0 +1,17 @@
+Item,Quantity,Used for,Source / link,Notes
+CyberPi + mBot2 Shield,1,Arm controller (motors + servo) talking to the computer over Wi-Fi (TCP),https://www.makeblock.com/pages/mbot2-coding-robot,From the Makeblock mBot2 kit; only sees 2.4 GHz Wi-Fi
+mBot2 encoder motor,2,Shoulder (EM1) and elbow (EM2) joints,https://www.makeblock.com/pages/mbot2-coding-robot,From the mBot2 kit; direct drive (no gearbox)
+Micro servo (LEGO-compatible),1,Gripper winch (port S1): winds a string to lower / lift / release the magnet,,Three positions: 0 grab / 110 lift / 170 release
+Geekservo motor (red; 2-wire),1,Shoulder assist (port M1),,Optional; disabled in software by default
+N52 neodymium magnet 12x3 mm,1,Gripper magnet on the end of the arm,,Picks a piece up from about 8 mm
+Neodymium magnet 10x2 mm,64,Two per piece: one on top (for the arm) and one underneath (for the board),,Cavities modeled at 10.1-10.2 mm for FDM tolerance
+Neodymium magnet 6x3 mm,64,One under each square to hold pieces in place,,
+LEGO Technic parts (assorted),1 set,Arm links; frames; gears; bevel gears and pulley for the gripper winch,,Beams; frames; pins; axles; gears
+Thread / string,1,Gripper winch line,,
+PLA filament (white + black),as needed,Robot body; head; base; gripper housing; camera mast; 32 chess pieces,https://bambulab.com,Printed on a Bambu Lab A1 mini
+Printed ArUco labels (DICT_4X4_50),36,32 piece markers + 4 board-corner markers,examples/generate_aruco_markers.py,Printed on paper with a white contrast ring
+Printed board sheet (300x300 mm; 32 mm squares),1,Chessboard surface,,Print at 100% without scaling; glued on a wooden base
+Wooden board base,1,Rigid base for the board and the square magnets,,
+Smartphone + phone mount,1,Overhead camera,https://iriunwebcam.com,Used as a webcam through Iriun
+Laptop (MacBook Air M1),1,Runs vision; Stockfish; voice and the web control panel,,Any computer with Python 3 should work
+Stockfish,1,Chess engine,https://stockfishchess.org,Free; installed with brew / apt
